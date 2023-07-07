@@ -1,8 +1,7 @@
 using LinearAlgebra: length
 using LinearAlgebra, Random, Test
 using ProximalOperators
-using NLPModels, NLPModelsModifiers, RegularizedProblems, RegularizedOptimization
-
+using NLPModels, NLPModelsModifiers, RegularizedProblems, RegularizedOptimization, OptimizationProblems, ADNLPModels, OptimizationProblems.ADNLPProblems
 const global compound = 1
 const global nz = 10 * compound
 const global options =
@@ -10,6 +9,32 @@ const global options =
 const global bpdn, bpdn_nls, sol = bpdn_model(compound)
 const global bpdn2, bpdn_nls2, sol2 = bpdn_model(compound, bounds = true)
 const global λ = norm(grad(bpdn, zeros(bpdn.meta.nvar)), Inf) / 10
+
+meta = OptimizationProblems.meta
+problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0), :]
+for problem ∈ eachrow(problem_list)
+  nlp = eval(Meta.parse(problem.name))()
+  @testset "Optimization Problems - $(problem.name) - Penalization" begin
+  
+    out = Penalization(
+      nlp,
+      options
+    ) 
+    @test typeof(out.solution) == typeof(nlp.meta.x0)
+    @test length(out.solution) == nlp.meta.nvar
+    @test typeof(out.solver_specific[:Fhist]) == typeof(out.solution)
+    @test typeof(out.solver_specific[:Hhist]) == typeof(out.solution)
+    @test typeof(out.solver_specific[:SubsolverCounter]) == Array{Int, 1}
+    @test typeof(out.dual_feas) == eltype(out.solution)
+    @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:Hhist])
+    @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:SubsolverCounter])
+    @test obj(nlp, out.solution) == out.solver_specific[:Fhist][end]
+    @test norm(cons(nlp,out.solution)) == out.solver_specific[:Hhist][end]
+    @test out.status == :first_order
+
+
+  end      
+end
 
 for (mod, mod_name) ∈ ((x -> x, "exact"), (LSR1Model, "lsr1"), (LBFGSModel, "lbfgs"))
   for (h, h_name) ∈ ((NormL0(λ), "l0"), (NormL1(λ), "l1"), (IndBallL0(10 * compound), "B0"))

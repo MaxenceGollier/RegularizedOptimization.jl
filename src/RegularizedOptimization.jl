@@ -1,13 +1,13 @@
 module RegularizedOptimization
 
 # base dependencies
-using LinearAlgebra, Logging, Printf
+using LinearAlgebra, Logging, Printf, SparseArrays
 
 # external dependencies
 using ProximalOperators, TSVD
 
 # dependencies from us
-using LinearOperators, NLPModels, NLPModelsModifiers, ShiftedProximalOperators, SolverCore
+using LinearOperators, NLPModels, NLPModelsModifiers,ShiftedProximalOperators ,SolverCore
 
 include("utils.jl")
 include("input_struct.jl")
@@ -19,5 +19,6 @@ include("TRDH_alg.jl")
 include("R2_alg.jl")
 include("LM_alg.jl")
 include("LMTR_alg.jl")
+include("Penalization_alg.jl")
 
 end  # module RegularizedOptimization
