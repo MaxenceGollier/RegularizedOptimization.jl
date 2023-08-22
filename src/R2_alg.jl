@@ -130,6 +130,7 @@ function R2(
 
   xkn = similar(xk)
   s = zero(xk)
+  s1 = zero(xk)
   ψ = has_bnds ? shifted(h, xk, l_bound - xk, u_bound - xk, selected) : shifted(h, xk)
 
   Fobj_hist = zeros(maxIter)
@@ -164,16 +165,27 @@ function R2(
     φk(d) = dot(∇fk, d)
     mk(d) = φk(d) + ψ(d)
 
+    #prox!(s, ψ, mν∇fk, 1/σmin)
     prox!(s, ψ, mν∇fk, ν)
     Complex_hist[k] += 1
     mks = mk(s)
     ξ = hk - mks + max(1, abs(hk)) * 10 * eps()
-
+    """  
     if ξ ≥ 0 && k == 1
-      ϵ += ϵr * sqrt(ξ)  # make stopping test absolute and relative
+      ϵ += ϵr * sqrt(ξ*σmin)  # make stopping test absolute and relative
     end
-    
-    if (ξ < 0 && sqrt(-ξ) ≤ neg_tol) || (ξ ≥ 0 && sqrt(ξ) ≤ ϵ)
+    """
+    if ξ ≥ 0 && k == 1
+      ϵ += ϵr * sqrt(ξ/ν)  # make stopping test absolute and relative
+    end
+    """
+    if (ξ < 0 && sqrt(-ξ*σmin) ≤ neg_tol) || (ξ ≥ 0 && sqrt(ξ*σmin) ≤ ϵ)
+      optimal = true
+      continue
+    end
+
+    """
+    if (ξ < 0 && sqrt(-ξ/ν) ≤ neg_tol) || (ξ ≥ 0 && sqrt(ξ/ν) ≤ ϵ)
       optimal = true
       continue
     end
@@ -216,6 +228,7 @@ function R2(
     tired = maxIter > 0 && k ≥ maxIter
     if !tired
       @. mν∇fk = -ν * ∇fk
+      
     end
   end
 
@@ -247,7 +260,7 @@ function R2(
     :status => status,
     :fk => fk,
     :hk => hk,
-    :ξ => ξ,
+    :ξ => ξ/ν,
     :elapsed_time => elapsed_time,
   )
 

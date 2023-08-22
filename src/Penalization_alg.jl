@@ -1,22 +1,115 @@
 export Penalization
 
+## Minimize 0.5*uQu - d*u + λ||Au+b||
+function QuadraticSolver(
+  f::F,
+  ∇f!::G,
+  ψ::S,
+  options::ROSolverOptions{R},
+  x0::AbstractVector{R};
+  selected::AbstractVector{<:Integer} = 1:length(x0),
+  Bk_inv = nothing,
+  d::AbstractVector{R} = zeros(length(x0)),
+  kwargs...
+) where {F <: Function, G <: Function, S, R <: Real}
+  if Bk_inv === nothing
+    error("The inverse of the hessian should be provided.")
+  end
+
+  α = 0.0
+  g = ψ.A*Bk_inv*d + ψ.b
+  H = Symmetric(ψ.A*Bk_inv*ψ.A')
+
+  Δ = ψ.h.lambda
+  s = zero(g)
+  m = length(g)
+  max_iter = 10000
+  tol = options.ϵa
+  k = 0
+
+  try
+    C = cholesky(H)
+    s .=  C\(-g)
+    if norm(s) <= Δ
+      return Bk_inv*(d + ψ.A'*s),1
+    end
+
+    w = C.L\s
+    α += ((norm(s)/norm(w))^2)*(norm(s)-Δ)/Δ
+
+  catch ex 
+    if isa(ex,LinearAlgebra.SingularException) || isa(ex,PosDefException)
+      α_opt = 10.0*sqrt(tol)
+      while α <= 0 
+        α_opt /= 10.0
+        C = cholesky(H+α_opt*I(m))
+        s .=  C\(-g)
+        w = C.L\s
+        α = α_opt + ((norm(s)/norm(w))^2)*(norm(s)-Δ)/Δ
+      end
+    else  
+      rethrow()
+    end
+
+  end
+  
+  # Cf Algorithm 7.3.1 in Conn-Gould-Toint
+  while abs(norm(s)-Δ)>tol && k < max_iter
+
+    k = k + 1 
+
+    C = cholesky(H+α*I(m))
+    s .=  C\(-g)
+    w = C.L\s
+
+    αn = ((norm(s)/norm(w))^2)*(norm(s)-Δ)/Δ
+    α += αn
+
+  end
+
+  if k > max_iter && abs(norm(s)-Δ)>sqrt(tol)
+    error("QuadraticSolver : Newton Method did not converge.")
+  end 
+
+  return Bk_inv*(d + ψ.A'*s),1
+end
+
+
 function Penalization(nlp::AbstractNLPModel, args...; kwargs...)
   kwargs_dict = Dict(kwargs...)
   x0 = pop!(kwargs_dict, :x0, nlp.meta.x0)
-  function J!(nlp::AbstractNLPModel,x::Vector{Float64},z::SparseMatrixCSC{Float64})
+  
+  function J!(nlp::AbstractNLPModel,z::SparseMatrixCSC{Float64},x::Vector{Float64})
     (rows,cols) = jac_structure(nlp)
     z .= sparse(rows,cols,jac_coord(nlp,x))
   end
-  xk, k, outdict = Penalization(
-    x -> obj(nlp, x),
-    (g, x) -> grad!(nlp, x, g),
-    (x, c) -> cons!(nlp, x, c),
-    (x, j) -> J!(nlp, x, j),
-    nlp.meta.ncon,
-    args...,
-    x0;
-    kwargs_dict...,
-  )
+  if isa(nlp,QuasiNewtonModel)
+    xk, k, outdict = Penalization(
+      x -> obj(nlp, x),
+      (g, x) -> grad!(nlp, x, g),
+      (c, x) -> cons!(nlp, x, c),
+      (j, x) -> J!(nlp, j, x),
+      nlp.meta.ncon,
+      subsolver = R2N,
+      args...,
+      x0;
+      B = x -> hess_op(nlp,x),
+      B_inv =  InverseLBFGSOperator(length(x0)),
+      kwargs_dict...,
+    )
+  else
+    xk, k, outdict = Penalization(
+      x -> obj(nlp, x),
+      (g, x) -> grad!(nlp, x, g),
+      (c, x) -> cons!(nlp, x, c),
+      (j, x) -> J!(nlp, j, x),
+      nlp.meta.ncon,
+      args...,
+      x0;
+      kwargs_dict...,
+    )
+  end
+
   ξ = outdict[:ξ]
   stats = GenericExecutionStats(nlp)
   set_status!(stats, outdict[:status])
@@ -40,6 +133,10 @@ function Penalization(
   m::Int,
   options::ROSolverOptions{R},
   x0::AbstractVector{R};
+  B = nothing,
+  B_inv = nothing,
+  Lj = nothing,
+  Lg = nothing,
   subsolver_logger::Logging.AbstractLogger = Logging.NullLogger(),
   subsolver = R2,
   subsolver_options = ROSolverOptions(ϵa = options.ϵa),
@@ -59,9 +156,7 @@ function Penalization(
   σmin = options.σmin
   ν = options.ν
   iter = 0
-
-
-
+  
   if verbose == 0
     ptf = Inf
   elseif verbose == 1
@@ -76,12 +171,14 @@ function Penalization(
   h_norm = eval(:NormL2)(1.0)
   xk = copy(x0)
   z = zeros(eltype(xk),m)
-  ck = c!(xk[selected],z)
+  ck = c!(z,xk[selected])
   hk = h_norm(ck)
 
   τk = 100.0 + hk 
+  #τk = 0.05
   nu_opt = 1.0
   β = 100.0
+  #β = 1.0
 
   h = eval(:NormL2)(τk)
 
@@ -105,12 +202,11 @@ function Penalization(
   ∇f!(∇fk, xk)
   s = zero(xk)
   Jk = spzeros(eltype(xk),m,length(xk))
-  J!(xk,Jk)
+  J!(Jk,xk)
   optimal = false
   tired = maxIter > 0 && k ≥ maxIter || elapsed_time > maxTime
     
   while !(optimal || tired)
-
     k = k + 1
     elapsed_time = time() - start_time
     Fobj_hist[k] = fk
@@ -138,22 +234,28 @@ function Penalization(
       continue
     end
 
-    subsolver_options.ϵa = 1e-6
     subsolver_options.ν = (1-subsolver_options.η2)/(2*subsolver_options.γ)
-
-    @debug "setting inner stopping tolerance to" subsolver_options.optTol
-    s, iter, _ = with_logger(subsolver_logger) do
-      subsolver(f, ∇f!, shifted(h,c!,J!,Jk,z), subsolver_options, xk)
+    subsolver_options.ϵa = k == 1 ? 1.0e-1 : max(ϵ_subsolver, min(1.0e-1, ξ1 / 10))
+    if Lj !== nothing && Lg !== nothing
+      κm = (τk*Lj+Lg)/2
+      subsolver_options.σmin = max(1/subsolver_options.ν,subsolver_options.γ*2*κm/(1-subsolver_options.η2))
     end
-    # restore initial subsolver_options.ϵa here so that subsolver_options.ϵa
-    # is not modified if there is an error
-    subsolver_options.ϵa = ϵ_subsolver_init
+
+    if subsolver == R2N
+      s, iter, _ = with_logger(subsolver_logger) do
+        subsolver(f, ∇f!,B, CompositeNormL2(h,c!,J!,Jk,z), subsolver_options, xk,B_inv = B_inv,subsolver = QuadraticSolver)
+      end
+    else
+      s, iter, _ = with_logger(subsolver_logger) do
+        subsolver(f, ∇f!, CompositeNormL2(h,c!,J!,Jk,z), subsolver_options, xk)
+      end
+    end
 
     Complex_hist[k] = iter 
 
     xk .=  s
     fk = f(xk)
-    ck = c!(xk[selected],z)
+    ck = c!(z,xk[selected])
     hk = h_norm(ck)
     hk == -Inf && error("nonsmooth term is not proper")
 

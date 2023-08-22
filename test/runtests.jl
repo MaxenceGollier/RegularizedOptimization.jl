@@ -13,33 +13,33 @@ const global λ = norm(grad(bpdn, zeros(bpdn.meta.nvar)), Inf) / 10
 meta = OptimizationProblems.meta
 problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0), :]
 for problem ∈ eachrow(problem_list)
-  nlp = eval(Meta.parse(problem.name))()
-  @testset "Optimization Problems - $(problem.name) - Penalization" begin
-  
-    out = Penalization(
-      nlp,
-      options
-    ) 
-    @test typeof(out.solution) == typeof(nlp.meta.x0)
-    @test length(out.solution) == nlp.meta.nvar
-    @test typeof(out.solver_specific[:Fhist]) == typeof(out.solution)
-    @test typeof(out.solver_specific[:Hhist]) == typeof(out.solution)
-    @test typeof(out.solver_specific[:SubsolverCounter]) == Array{Int, 1}
-    @test typeof(out.dual_feas) == eltype(out.solution)
-    @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:Hhist])
-    @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:SubsolverCounter])
-    @test obj(nlp, out.solution) == out.solver_specific[:Fhist][end]
-    @test norm(cons(nlp,out.solution)) == out.solver_specific[:Hhist][end]
-    @test out.status == :first_order
+  for (nlp,subsolver_name) ∈ ((eval(Meta.parse(problem.name))(),"R2"),(LBFGSModel(eval(Meta.parse(problem.name))()),"R2N - LBFGS"),(LSR1Model(eval(Meta.parse(problem.name))()),"R2N - LSR1"),(DiagonalQNModel(eval(Meta.parse(problem.name))()),"R2N - DiagonalQN"))
+    @testset "Optimization Problems - $(problem.name) - Penalization - $(subsolver_name)" begin
+      out = Penalization(
+        nlp,
+        options,
+      ) 
+      @test typeof(out.solution) == typeof(nlp.meta.x0)
+      @test length(out.solution) == nlp.meta.nvar
+      @test typeof(out.solver_specific[:Fhist]) == typeof(out.solution)
+      @test typeof(out.solver_specific[:Hhist]) == typeof(out.solution)
+      @test typeof(out.solver_specific[:SubsolverCounter]) == Array{Int, 1}
+      @test typeof(out.dual_feas) == eltype(out.solution)
+      @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:Hhist])
+      @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:SubsolverCounter])
+      @test obj(nlp, out.solution) == out.solver_specific[:Fhist][end]
+      @test norm(cons(nlp,out.solution)) == out.solver_specific[:Hhist][end]
+      @test out.status == :first_order
 
 
-  end      
+    end      
+  end
 end
 
 for (mod, mod_name) ∈ ((x -> x, "exact"), (LSR1Model, "lsr1"), (LBFGSModel, "lbfgs"))
   for (h, h_name) ∈ ((NormL0(λ), "l0"), (NormL1(λ), "l1"), (IndBallL0(10 * compound), "B0"))
-    for solver_sym ∈ (:R2, :TR)
-      solver_sym == :TR && mod_name == "exact" && continue
+    for solver_sym ∈ (:R2, :TR, :R2N)
+      solver_sym ∈ (:TR,:R2N) && mod_name == "exact" && continue
       solver_sym == :TR && h_name == "B0" && continue  # FIXME
       solver_name = string(solver_sym)
       solver = eval(solver_sym)
@@ -47,7 +47,7 @@ for (mod, mod_name) ∈ ((x -> x, "exact"), (LSR1Model, "lsr1"), (LBFGSModel, "l
         x0 = zeros(bpdn.meta.nvar)
         p = randperm(bpdn.meta.nvar)[1:nz]
         x0[p[1:nz]] = sign.(randn(nz))  # initial guess with nz nonzeros (necessary for h = B0)
-        args = solver_sym == :R2 ? () : (NormLinf(1.0),)
+        args = solver_sym ∈ (:R2,:R2N) ? () : (NormLinf(1.0),)
         out = solver(mod(bpdn), h, args..., options, x0 = x0)
         @test typeof(out.solution) == typeof(bpdn.meta.x0)
         @test length(out.solution) == bpdn.meta.nvar
