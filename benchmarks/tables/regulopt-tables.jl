@@ -205,7 +205,8 @@ function benchmark_table(
   subsolvers,
   solver_options,
   subsolver_options,
-  pb_name::String;
+  pb_name::String,
+  random_seed::Int;
   tex::Bool = false,
   nls_train::Union{Nothing, AbstractNLSModel} = nothing, # for SVM
   nls_test::Union{Nothing, AbstractNLSModel} = nothing, # for SVM
@@ -225,6 +226,7 @@ function benchmark_table(
       zip(solvers, subsolvers, solver_options, subsolver_options)
     @info " using $solver with subsolver = $subsolver"
     args = solver == :R2 ? () : (NormLinf(1.0),)
+    Random.seed!(random_seed)
     if subsolver == :None
       solver_out = eval(solver)(f, h, args..., opt, x0 = f.meta.x0, selected = selected)
     else
@@ -252,7 +254,7 @@ function benchmark_table(
         "solver",
         L"$f(x)$",
         L"$h(x) / \lambda$",
-        L"$\xi$",
+        L"$\sqrt{\xi / \nu}$",
         L"$\# \ f$",
         L"$\# \ \nabla f$",
         L"$\# \ prox$",
@@ -263,7 +265,7 @@ function benchmark_table(
         "solver",
         "\$f(x)\$",
         L"$h(x)/\lambda$",
-        L"$\xi$",
+        L"$\sqrt{\xi / \nu}$",
         pb_name[1:3] == "SVM" ? L"$(Train, Test)$" : L"$\|x-x_T\|_2$",
         L"$\# \ f$",
         L"$\# \ \nabla f$",
@@ -273,13 +275,13 @@ function benchmark_table(
     end
   else
     if length(sol) == 0
-      header = ["solver", "f(x)", "h(x)/λ", "ξ", "# f", "# ∇f", "# prox", "t (s)"]
+      header = ["solver", "f(x)", "h(x)/λ", "√(ξ/ν)", "# f", "# ∇f", "# prox", "t (s)"]
     else
       header = [
         "solver",
         "f(x)",
         "h(x)/λ",
-        "ξ",
+        "√ξ/√ν",
         pb_name[1:3] == "SVM" ? "(Train, Test)" : "||x-x*||",
         "# f",
         "# ∇f",

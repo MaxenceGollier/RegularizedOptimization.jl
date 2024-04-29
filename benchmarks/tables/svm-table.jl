@@ -1,7 +1,8 @@
 include("regulopt-tables.jl")
 using MLDatasets
 
-Random.seed!(1234)
+random_seed = 1234
+Random.seed!(random_seed)
 nlp_train, nls_train, sol_train = RegularizedProblems.svm_train_model()
 nlp_test, nls_test, sol_test = RegularizedProblems.svm_test_model()
 f = LBFGSModel(nlp_train)
@@ -14,7 +15,7 @@ verbose = 0 #10
 ϵ = 1.0e-4
 ϵi = 1.0e-3
 ϵri = 1.0e-6
-maxIter = 500
+maxIter = 1000
 maxIter_inner = 100
 options =
   ROSolverOptions(ν = ν, ϵa = ϵ, ϵr = ϵ, verbose = verbose, maxIter = maxIter, spectral = true)
@@ -137,6 +138,7 @@ benchmark_table(
   solver_options[subset],
   subsolver_options[subset],
   "SVM with ν = $ν, λ = $λ",
+  random_seed,
   nls_train = nls_train,
   nls_test = nls_test,
   tex = false,

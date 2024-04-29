@@ -21,7 +21,7 @@ and Δₖ > 0 is the trust-region radius.
 
 ### Arguments
 
-* `nlp::AbstractNLPModel`: a smooth optimization problem
+* `nlp::AbstractDiagonalQNModel`: a smooth optimization problem
 * `h`: a regularizer such as those defined in ProximalOperators
 * `χ`: a norm used to define the trust region in the form of a regularizer
 * `options::ROSolverOptions`: a structure containing algorithmic parameters
@@ -38,7 +38,6 @@ In the second form, instead of `nlp`, the user may pass in
 
 * `x0::AbstractVector`: an initial guess (default: `nlp.meta.x0`)
 * `selected::AbstractVector{<:Integer}`: (default `1:f.meta.nvar`)
-* `Bk`: initial diagonal Hessian approximation (default: `(one(R) / options.ν) * I`).
 
 ### Return values
 
@@ -48,18 +47,19 @@ In the second form, instead of `nlp`, the user may pass in
 * `Complex_hist`: an array with the history of number of inner iterations.
 """
 function TRDH(
-  nlp::AbstractNLPModel{R},
+  nlp::AbstractDiagonalQNModel{R, S},
   h,
   χ,
   options::ROSolverOptions{R};
   kwargs...,
-) where {R <: Real}
+) where {R <: Real, S}
   kwargs_dict = Dict(kwargs...)
   x0 = pop!(kwargs_dict, :x0, nlp.meta.x0)
   xk, k, outdict = TRDH(
     x -> obj(nlp, x),
     (g, x) -> grad!(nlp, x, g),
     h,
+    hess_op(nlp, x0),
     options,
     x0;
     χ = χ,
@@ -72,7 +72,7 @@ function TRDH(
   set_status!(stats, outdict[:status])
   set_solution!(stats, xk)
   set_objective!(stats, outdict[:fk] + outdict[:hk])
-  set_residuals!(stats, zero(eltype(xk)), ξ ≥ 0 ? sqrt(ξ) : ξ)
+  set_residuals!(stats, zero(eltype(xk)), ξ)
   set_iter!(stats, k)
   set_time!(stats, outdict[:elapsed_time])
   set_solver_specific!(stats, :Fhist, outdict[:Fhist])
@@ -97,13 +97,13 @@ function TRDH(
   f::F,
   ∇f!::G,
   h::H,
+  D::DQN,
   options::ROSolverOptions{R},
   x0::AbstractVector{R};
   χ::X = NormLinf(one(R)),
   selected::AbstractVector{<:Integer} = 1:length(x0),
-  Bk = (one(R) / options.ν) * I,
   kwargs...,
-) where {R <: Real, F, G, H, X}
+) where {R <: Real, F, G, H, DQN <: AbstractDiagonalQuasiNewtonOperator, X}
   start_time = time()
   elapsed_time = 0.0
   ϵ = options.ϵa
@@ -118,9 +118,6 @@ function TRDH(
   γ = options.γ
   α = options.α
   β = options.β
-  spectral = options.spectral
-  psb = options.psb
-  hess_init_val = (Bk isa UniformScaling) ? Bk.λ : (one(R) / options.ν)
   reduce_TR = options.reduce_TR
 
   local l_bound, u_bound
@@ -161,8 +158,8 @@ function TRDH(
   s = zero(xk)
   l_bound_k = similar(xk)
   u_bound_k = similar(xk)
-  if h isa ShiftedProximableFunction # case TRDH is used as a subsolver
-    is_subsolver = true
+  is_subsolver = h isa ShiftedProximableFunction # case TRDH is used as a subsolver
+  if is_subsolver
     ψ = shifted(h, xk)
     @assert !has_bnds
     l_bound = copy(ψ.l)
@@ -172,7 +169,6 @@ function TRDH(
     has_bnds = true
     set_bounds!(ψ, l_bound_k, u_bound_k)
   else
-    is_subsolver = false
     if has_bnds
       @. l_bound_k = max(-Δk, l_bound - xk)
       @. u_bound_k = min(Δk, u_bound - xk)
@@ -188,9 +184,9 @@ function TRDH(
   if verbose > 0
     #! format: off
     if reduce_TR
-      @info @sprintf "%6s %8s %8s %7s %7s %8s %7s %7s %7s %7s %1s" "outer" "f(x)" "h(x)" "√ξ1" "√ξ" "ρ" "Δ" "‖x‖" "‖s‖" "‖Dₖ‖" "TRDH"
+      @info @sprintf "%6s %8s %8s %7s %7s %8s %7s %7s %7s %7s %1s" "outer" "f(x)" "h(x)" "√(ξ1/ν)" "√ξ" "ρ" "Δ" "‖x‖" "‖s‖" "‖Dₖ‖" "TRDH"
     else
-      @info @sprintf "%6s %8s %8s %7s %8s %7s %7s %7s %7s %1s" "outer" "f(x)" "h(x)" "√ξ" "ρ" "Δ" "‖x‖" "‖s‖" "‖Dₖ‖" "TRDH"
+      @info @sprintf "%6s %8s %8s %7s %8s %7s %7s %7s %7s %1s" "outer" "f(x)" "h(x)" "√(ξ/ν)" "ρ" "Δ" "‖x‖" "‖s‖" "‖Dₖ‖" "TRDH"
     end
     #! format: off
   end
@@ -203,12 +199,11 @@ function TRDH(
   ∇fk = similar(xk)
   ∇f!(∇fk, xk)
   ∇fk⁻ = copy(∇fk)
-  Dk = spectral ? SpectralGradient(hess_init_val, length(xk)) :
-    ((Bk isa UniformScaling) ? DiagonalQN(fill!(similar(xk), hess_init_val), psb) : DiagonalQN(diag(Bk), psb))
-  DkNorm = norm(Dk.d, Inf)
-  νInv = (DkNorm + one(R) / (α * Δk))
+  DNorm = norm(D.d, Inf)
+  νInv = DNorm + one(R) / (α * Δk)
   ν = one(R) / νInv
   mν∇fk = -ν .* ∇fk
+  sqrt_ξ_νInv = one(R)
 
   optimal = false
   tired = maxIter > 0 && k ≥ maxIter || elapsed_time > maxTime
@@ -227,12 +222,13 @@ function TRDH(
       prox!(s, ψ, mν∇fk, ν)
       Complex_hist[k] += 1
       ξ1 = hk - mk1(s) + max(1, abs(hk)) * 10 * eps()
+      sqrt_ξ_νInv = ξ1 ≥ 0 ? sqrt(ξ1 / ν) : sqrt(-ξ1 / ν)
 
       if ξ1 ≥ 0 && k == 1
-        ϵ += ϵr * sqrt(ξ1)  # make stopping test absolute and relative
+        ϵ += ϵr * sqrt_ξ_νInv  # make stopping test absolute and relative
       end
 
-      if (ξ1 < 0 && sqrt(-ξ1) ≤ neg_tol) || (ξ1 ≥ 0 && sqrt(ξ1) < ϵ)
+      if (ξ1 < 0 && sqrt_ξ_νInv ≤ neg_tol) || (ξ1 ≥ 0 && sqrt_ξ_νInv < ϵ)
         # the current xk is approximately first-order stationary
         optimal = true
         continue
@@ -250,12 +246,11 @@ function TRDH(
       set_radius!(ψ, Δ_effective)
     end
 
-    # model with diagonal hessian 
-    φ(d) = ∇fk' * d + (d' * (Dk.d .* d)) / 2
+    # model with diagonal hessian
+    φ(d) = ∇fk' * d + (d' * (D.d .* d)) / 2
     mk(d) = φ(d) + ψ(d)
 
-    iprox!(s, ψ, ∇fk, Dk)
-    Complex_hist[k] += 1
+    iprox!(s, ψ, ∇fk, D)
 
     sNorm = χ(s)
     xkn .= xk .+ s
@@ -267,11 +262,13 @@ function TRDH(
     ξ = hk - mk(s) + max(1, abs(hk)) * 10 * eps()
 
     if !reduce_TR
+
+      sqrt_ξ_νInv = ξ ≥ 0 ? sqrt(ξ / ν) : sqrt(-ξ / ν)
       if ξ ≥ 0 && k == 1
-        ϵ += ϵr * sqrt(ξ)  # make stopping test absolute and relative
+        ϵ += ϵr * sqrt_ξ_νInv  # make stopping test absolute and relative
       end
 
-      if (ξ < 0 && sqrt(-ξ) ≤ neg_tol) || (ξ ≥ 0 && sqrt(ξ) < ϵ)
+      if (ξ < 0 && sqrt_ξ_νInv ≤ neg_tol) || (ξ ≥ 0 && sqrt_ξ_νInv < ϵ)
         # the current xk is approximately first-order stationary
         optimal = true
         continue
@@ -289,9 +286,9 @@ function TRDH(
     if (verbose > 0) && (k % ptf == 0)
       #! format: off
       if reduce_TR
-        @info @sprintf "%6d %8.1e %8.1e %7.1e %7.1e %8.1e %7.1e %7.1e %7.1e %7.1e %1s" k fk hk sqrt(ξ1) sqrt(ξ) ρk Δk χ(xk) sNorm norm(Dk.d) TR_stat
+        @info @sprintf "%6d %8.1e %8.1e %7.1e %7.1e %8.1e %7.1e %7.1e %7.1e %7.1e %1s" k fk hk sqrt_ξ_νInv sqrt(ξ) ρk Δk χ(xk) sNorm norm(D.d) TR_stat
       else
-        @info @sprintf "%6d %8.1e %8.1e %7.1e %8.1e %7.1e %7.1e %7.1e %7.1e %1s" k fk hk sqrt(ξ) ρk Δk χ(xk) sNorm norm(Dk.d) TR_stat
+        @info @sprintf "%6d %8.1e %8.1e %7.1e %8.1e %7.1e %7.1e %7.1e %7.1e %1s" k fk hk sqrt_ξ_νInv ρk Δk χ(xk) sNorm norm(D.d) TR_stat
       end
       #! format: on
     end
@@ -310,8 +307,8 @@ function TRDH(
       hk = hkn
       shift!(ψ, xk)
       ∇f!(∇fk, xk)
-      push!(Dk, s, ∇fk - ∇fk⁻) # update QN operator
-      DkNorm = norm(Dk.d, Inf)
+      push!(D, s, ∇fk - ∇fk⁻) # update QN operator
+      DNorm = norm(D.d, Inf)
       ∇fk⁻ .= ∇fk
     end
 
@@ -321,7 +318,7 @@ function TRDH(
       has_bnds ? set_bounds!(ψ, l_bound_k, u_bound_k) : set_radius!(ψ, Δk)
     end
 
-    νInv = (DkNorm + one(R) / (α * Δk))
+    νInv = reduce_TR ? (DNorm + one(R) / (α * Δk)) : (DNorm + one(R) / α)
     ν = one(R) / νInv
     mν∇fk .= -ν .* ∇fk
 
@@ -334,14 +331,14 @@ function TRDH(
     elseif optimal
       #! format: off
       if reduce_TR
-        @info @sprintf "%6d %8.1e %8.1e %7.1e %7.1e %8s %7.1e %7.1e %7.1e %7.1e" k fk hk sqrt(ξ1) sqrt(ξ1) "" Δk χ(xk) χ(s) norm(Dk.d)
+        @info @sprintf "%6d %8.1e %8.1e %7.1e %7.1e %8s %7.1e %7.1e %7.1e %7.1e" k fk hk sqrt_ξ_νInv sqrt(ξ1) "" Δk χ(xk) χ(s) norm(D.d)
         #! format: on
-        @info "TRDH: terminating with √ξ1 = $(sqrt(ξ1))"
+        @info "TRDH: terminating with √(ξ1/ν) = $(sqrt_ξ_νInv)"
       else
-        @info @sprintf "%6d %8.1e %8.1e %7.1e %8s %7.1e %7.1e %7.1e %7.1e" k fk hk sqrt(ξ) "" Δk χ(
-          xk,
-        ) χ(s) norm(Dk.d)
-        @info "TRDH: terminating with √ξ = $(sqrt(ξ))"
+        #! format: off
+        @info @sprintf "%6d %8.1e %8.1e %7.1e %8s %7.1e %7.1e %7.1e %7.1e" k fk hk sqrt_ξ_νInv "" Δk χ(xk) χ(s) norm(D.d)
+        #! format: on
+        @info "TRDH: terminating with √(ξ/ν) = $(sqrt_ξ_νInv)"
       end
     end
   end
@@ -365,7 +362,7 @@ function TRDH(
     :status => status,
     :fk => fk,
     :hk => hk,
-    :ξ => ξ1,
+    :ξ => sqrt_ξ_νInv,
     :elapsed_time => elapsed_time,
   )
 

@@ -3,7 +3,8 @@ using ADNLPModels, DifferentialEquations
 
 display_sol = true
 
-Random.seed!(1234)
+random_seed = 12345
+Random.seed!(random_seed)
 
 cstr = false
 ctr_val = cstr ? 0.5 : -Inf
@@ -12,9 +13,9 @@ uvar = fill(Inf, 5)
 data, simulate, resid, misfit, x0 = RegularizedProblems.FH_smooth_term()
 model = ADNLPModel(misfit, ones(5), lvar, uvar)
 f = LBFGSModel(model)
-λ = cstr ? 2.0e1 : 1.0e1
+λ = cstr ? 4.0e1 : 1.0e1
 
-h = NormL1(λ)
+h = cstr ? NormL1(λ) : NormL0(λ)
 ν = 1.0e0
 verbose = 0 #10
 maxIter = 500
@@ -143,6 +144,7 @@ names, stats = benchmark_table(
   solver_options[subset],
   subsolver_options[subset],
   "FH with ν = $ν, λ = $λ",
+  random_seed,
   tex = false,
 );
 
