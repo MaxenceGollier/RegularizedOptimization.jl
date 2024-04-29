@@ -28,9 +28,9 @@ where F(x) and J(x) are the residual and its Jacobian at x, respectively, ψ(s; 
 
 * `x0::AbstractVector`: an initial guess (default: `nls.meta.x0`)
 * `subsolver_logger::AbstractLogger`: a logger to pass to the subproblem solver
-* `subsolver`: the procedure used to compute a step (`PG` or `R2`)
+* `subsolver`: the procedure used to compute a step (`PG`, `R2` or `TRDH`)
 * `subsolver_options::ROSolverOptions`: default options to pass to the subsolver.
-* `selected::AbstractVector{<:Integer}`: (default `1:f.meta.nvar`).
+* `selected::AbstractVector{<:Integer}`: (default `1:nls.meta.nvar`).
 
 ### Return values
 
@@ -55,8 +55,6 @@ function LMTR(
   # initialize passed options
   ϵ = options.ϵa
   ϵ_subsolver = subsolver_options.ϵa
-  ϵ_subsolver_init = subsolver_options.ϵa
-  ϵ_subsolver = copy(ϵ_subsolver_init)
   ϵr = options.ϵr
   Δk = options.Δk
   verbose = options.verbose
@@ -68,6 +66,11 @@ function LMTR(
   α = options.α
   θ = options.θ
   β = options.β
+
+  # store initial values of the subsolver_options fields that will be modified
+  ν_subsolver = subsolver_options.ν
+  ϵa_subsolver = subsolver_options.ϵa
+  Δk_subsolver = subsolver_options.Δk
 
   local l_bound, u_bound
   treats_bounds = has_bounds(nls) || subsolver == TRDH
@@ -107,6 +110,9 @@ function LMTR(
   Fobj_hist = zeros(maxIter)
   Hobj_hist = zeros(maxIter)
   Complex_hist = zeros(Int, maxIter)
+  Grad_hist = zeros(Int, maxIter)
+  Resid_hist = zeros(Int, maxIter)
+
   if verbose > 0
     #! format: off
     @info @sprintf "%6s %8s %8s %8s %7s %7s %8s %7s %7s %7s %7s %1s" "outer" "inner" "f(x)" "h(x)" "√ξ1" "√ξ" "ρ" "Δ" "‖x‖" "‖s‖" "1/ν" "TR"
@@ -137,6 +143,8 @@ function LMTR(
     elapsed_time = time() - start_time
     Fobj_hist[k] = fk
     Hobj_hist[k] = hk
+    Grad_hist[k] = nls.counters.neval_jtprod_residual + nls.counters.neval_jprod_residual
+    Resid_hist[k] = nls.counters.neval_residual
 
     # model for first prox-gradient iteration
     φ1(d) = begin
@@ -165,8 +173,8 @@ function LMTR(
 
     # Take first proximal gradient step s1 and see if current xk is nearly stationary.
     # s1 minimizes φ1(d) + ‖d‖² / 2 / ν + ψ(d) ⟺ s1 ∈ prox{νψ}(-ν∇φ1(0))
-    subsolver_options.ν = 1 / (νInv + 1 / (Δk * α))
-    prox!(s, ψ, mν∇fk, subsolver_options.ν)
+    ν = 1 / (νInv + 1 / (Δk * α))
+    prox!(s, ψ, mν∇fk, ν)
     ξ1 = fk + hk - mk1(s) + max(1, abs(fk + hk)) * 10 * eps()
     ξ1 > 0 || error("LMTR: first prox-gradient step should produce a decrease but ξ1 = $(ξ1)")
 
@@ -188,12 +196,16 @@ function LMTR(
     set_bounds!(ψ, max.(-∆_effective, l_bound - xk), min.(∆_effective, u_bound - xk)) :
     set_radius!(ψ, ∆_effective)
     subsolver_options.Δk = ∆_effective / 10
+    subsolver_options.ν = ν
+    subsolver_args = subsolver == TRDH ? (SpectralGradient(1 / ν, nls.meta.nvar),) : ()
     s, iter, _ = with_logger(subsolver_logger) do
-      subsolver(φ, ∇φ!, ψ, subsolver_options, s)
+      subsolver(φ, ∇φ!, ψ, subsolver_args..., subsolver_options, s)
     end
-    # restore initial subsolver_options.ϵa here so that subsolver_options.ϵa
-    # is not modified if there is an error
-    subsolver_options.ϵa = ϵ_subsolver_init
+    # restore initial values of subsolver_options here so that it is not modified
+    # if there is an error
+    subsolver_options.ν = ν_subsolver
+    subsolver_options.ϵa = ϵa_subsolver
+    subsolver_options.Δk = Δk_subsolver
 
     Complex_hist[k] = iter
 
@@ -286,5 +298,7 @@ function LMTR(
   set_solver_specific!(stats, :Hhist, Hobj_hist[1:k])
   set_solver_specific!(stats, :NonSmooth, h)
   set_solver_specific!(stats, :SubsolverCounter, Complex_hist[1:k])
+  set_solver_specific!(stats, :NLSGradHist, Grad_hist[1:k])
+  set_solver_specific!(stats, :ResidHist, Resid_hist[1:k])
   return stats
 end
