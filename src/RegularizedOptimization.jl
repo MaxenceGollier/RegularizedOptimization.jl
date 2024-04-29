@@ -1,7 +1,7 @@
 module RegularizedOptimization
 
 # base dependencies
-using LinearAlgebra, Logging, Printf, SparseArrays
+using LinearAlgebra, Logging, Printf, SparseArrays, SparseMatricesCOO
 
 # external dependencies
 using ProximalOperators, TSVD
@@ -20,6 +20,7 @@ include("R2_alg.jl")
 include("R2N.jl")
 include("LM_alg.jl")
 include("LMTR_alg.jl")
-include("Penalization_alg.jl")
+include("L2Penalty_alg.jl")
+include("L1Penalty_alg.jl")
 
 end  # module RegularizedOptimization
