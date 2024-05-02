@@ -11,38 +11,18 @@ using NLPModels,
 using Printf
 using SparseArrays
 
-# utils for extracting stats / display table
-modelname(nlp::LSR1Model) = "LSR1"
-modelname(nlp::LBFGSModel) = "LBFGS"
-modelname(nlp::SpectralGradientModel) = "SpectralGradient"
-modelname(nlp::DiagonalQNModel) = "DiagonalQN"
+
 solvername(solver::Symbol) = begin
-  if solver == :fps_solve
-    return "FPS"
-  elseif solver == :percival
-    return "AL"
-  elseif solver== :Penalization
-    return "L2PS"
+  if solver == :percival
+    return "Percival"
+  elseif solver== :L2Penalty
+    return "Penalty"
   else 
     return string(solver)
   end
 end
 subsolvername(subsolver::Symbol) = subsolver == :None ? "" : string("-", subsolver)
-modelname(model::Symbol) = begin
-  if model == :None
-    return ""
-  elseif model == :SpectralGradientModel
-    return "-SG"
-  elseif model == :DiagonalQNModel
-    return "-D"
-  elseif model == :LBFGSModel
-    return "-LBFGS"
-  elseif model == :LSR1Model
-    return "-LSR1"
-  else 
-    return string("-", model)
-  end
-end
+
 function options_str(
   options::ROSolverOptions,
   solver::Symbol,
@@ -69,7 +49,6 @@ acc = vec -> length(findall(x -> x < 1, vec)) / length(vec) * 100 # for SVM
 
 function benchmark_table(
   f::AbstractNLPModel,
-  models,
   solvers,
   subsolvers,
   solver_options,
@@ -79,8 +58,8 @@ function benchmark_table(
 )
   solver_names = [
     "$(solvername(solver))$(subsolvername(subsolver))$(options_str(opt, solver, subsolver_opt, subsolver))"
-    for (solver,model, opt, subsolver, subsolver_opt) in
-    zip(solvers,models, solver_options, subsolvers, subsolver_options)
+    for (solver, opt, subsolver, subsolver_opt) in
+    zip(solvers, solver_options, subsolvers, subsolver_options)
   ]
   nf_evals = []
   n∇f_evals = []
@@ -88,45 +67,41 @@ function benchmark_table(
   nJ_evals = []
   nH_evals = []
   solver_stats = []
-
-  cb = (nlp,solver,stats) -> begin
-      if(stats.dual_feas<tol&&norm(cons(nlp,stats.solution)) < tol)
+  
+  b = zeros(Float64,nlp.meta.ncon)
+  cb = (nlp,solver,stats) -> begin ## Callback
+      cons!(nlp,solver.x,b) 
+      if norm(solver.Jx'*solver.y - solver.gx) < tol && norm(b) < tol
         stats.status = :user
       end
-  end
+    end
 
-  for (solver,model, subsolver, opt, sub_opt) in
-      zip(solvers,models, subsolvers, solver_options, subsolver_options)
-    @info " using $solver with subsolver = $subsolver and model = $model" 
-    if solver == :fps_solve || solver == :percival
-      solver_out = eval(solver)(f,callback=cb)
-
-    elseif subsolver == :None
-      solver_out = eval(solver)(f, opt,subsolver_options = sub_opt)
-      
-    elseif model == :None
+  for (solver, subsolver, opt, sub_opt) in
+      zip(solvers, subsolvers, solver_options, subsolver_options)
+    @info " using $solver with subsolver = $subsolver" 
+    if solver == :percival
+      solver_out = eval(solver)(f,rtol = 0.0,atol = 0.0,callback=cb)
+      println(solver_out.status)
+    else
       solver_out = eval(solver)(
         f,
         opt,
         subsolver = eval(subsolver),
         subsolver_options = sub_opt,
-        callback =cb,
-      )
-    else 
-      solver_out = eval(solver)(
-        eval(model)(f),
-        opt,
-        subsolver = eval(subsolver),
-        subsolver_options = sub_opt,
-        callback =cb,
       )
     end
+
     push!(nf_evals, obj_evals(f))
     push!(n∇f_evals, grad_evals(f))
     push!(nc_evals, neval_cons(f))
-    push!(nJ_evals,neval_jac(f)+neval_jprod(f)+neval_jtprod(f))
-    push!(nH_evals,neval_hess(f)+neval_hprod(f))
-    push!(solver_stats, solver_out)
+    push!(nJ_evals,neval_jac(f))
+    push!(nH_evals,neval_hess(f))
+
+    if solver == :percival
+      push!(solver_stats, measure)
+    else
+      push!(solver_stats, solver_out)
+    end
     reset!(f)
   end
 
@@ -143,7 +118,7 @@ function benchmark_table(
       L"$\# \ J$",
     ]
   else
-    header = ["solver", "f(x)", "||c(x)||", "ξ", "# f", "# ∇f", "# ∇²f", "# c", "# J"]
+    header = ["solver", "f(x)", " ||c(x)||₂", "||J(x)^T y - ∇f(x)||₂", "# f", "# ∇f", "# ∇²f", "# c", "# J"]
   end
   nh = length(header)
   n_solvers = length(solver_names)
@@ -154,14 +129,15 @@ function benchmark_table(
     solver_out = solver_stats[i]
     x = solver_out.solution
 
-    if solvers[i] == :fps_solve || solvers[i] == :percival
+    if solvers[i] == :percival
       fx = solver_out.objective
       hx = norm(cons(f,x))
-      ξ = solver_out.dual_feas
+      ξ = solver_out
     else
       fx = solver_out.solver_specific[:Fhist][end]
       hx = solver_out.solver_specific[:Hhist][end]
-      ξ = solver_out.dual_feas
+      ξ = 0.0 #solver_out.subsolver.x
+      println(fieldnames(typeof(solver_out)))
     end
     nf = nf_evals[i]
     n∇f = n∇f_evals[i]

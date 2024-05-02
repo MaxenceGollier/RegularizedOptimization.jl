@@ -59,6 +59,7 @@ function L2Penalty(
   σmin = options.σmin
   ν = options.ν
   iter = 0
+  ϵ_benchmark = 1e-6
 
   if verbose == 0
     ptf = Inf
@@ -71,8 +72,8 @@ function L2Penalty(
   end
 
   # initialize parameters
-  τk = 10.0 
-  β = 1.0
+  τk = 100.0 
+  β = 100.0
 
   h_norm = NormL2(1.0)
   h = NormL2(τk)
@@ -87,6 +88,8 @@ function L2Penalty(
   fk = f(xk)
   ∇f!(∇fk, xk)
   J!(J_coo,xk)
+
+  ψ = CompositeNormL2(1.0,c!,J!,J_coo,b)
 
   Fobj_hist = zeros(maxIter)
   Hobj_hist = zeros(maxIter)
@@ -104,7 +107,6 @@ function L2Penalty(
 
   optimal = false
   tired = maxIter > 0 && k ≥ maxIter || elapsed_time > maxTime
-    
   while !(optimal || tired)
     k = k + 1
     elapsed_time = time() - start_time
@@ -132,8 +134,14 @@ function L2Penalty(
       optimal = true
       continue
     end
+
+    if norm(ψ.b) < ϵ_benchmark ## for benchmarking
+      optimal = true
+      continue
+    end
+
     s, iter, _ = with_logger(subsolver_logger) do
-      subsolver(f, ∇f!, CompositeNormL2(τk,c!,J!,Jk,z), subsolver_options, xk)
+      subsolver(f, ∇f!, CompositeNormL2(τk,c!,J!,J_coo,b), subsolver_options, xk)
     end
 
     Complex_hist[k] = iter 

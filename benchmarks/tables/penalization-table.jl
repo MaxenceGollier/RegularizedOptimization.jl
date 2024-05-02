@@ -1,23 +1,26 @@
 include("regulopt-tables.jl")
 using OptimizationProblems, ADNLPModels, OptimizationProblems.ADNLPProblems
-using FletcherPenaltySolver, Percival
+using Percival
 using Random
-"""
-using Gridap, PDENLPModels
+
+using Gridap, PDENLPModels,Krylov
 
 
 n = 20
+
+# Domain
 domain = (-1, 1, -1, 1)
 partition = (n, n)
 model = CartesianDiscreteModel(domain, partition)
 
-# Definition of the FE-spaces
-reffe = ReferenceFE(lagrangian, Float64, 1)
+# Definition of the spaces:
+valuetype = Float64
+reffe = ReferenceFE(lagrangian, valuetype, 1)
 Xpde = TestFESpace(model, reffe; conformity = :H1, dirichlet_tags = "boundary")
 y0(x) = 0.0
 Ypde = TrialFESpace(Xpde, y0)
 
-reffe_con = ReferenceFE(lagrangian, Float64, 1)
+reffe_con = ReferenceFE(lagrangian, valuetype, 1)
 Xcon = TestFESpace(model, reffe_con; conformity = :H1)
 Ycon = TrialFESpace(Xcon)
 Y = MultiFieldFESpace([Ypde, Ycon])
@@ -27,7 +30,7 @@ trian = Triangulation(model)
 degree = 1
 dΩ = Measure(trian, degree)
 
-# Objective function
+# Objective function:
 yd(x) = -x[1]^2
 α = 1e-2
 function f(y, u)
@@ -37,22 +40,32 @@ end
 # Definition of the constraint operator
 ω = π - 1 / 8
 h(x) = -sin(ω * x[1]) * sin(ω * x[2])
-function res(y, u, v)
-  ∫(∇(v) ⊙ ∇(y) - v * u - v * h) * dΩ
+function res(yu, v)
+  y, u = yu
+  ∫(∇(v) ⊙ ∇(y) - v * u) * dΩ #- v * h
 end
-op = FEOperator(res, Y, Xpde)
+rhs(v) = ∫(v * h) * dΩ
+op = AffineFEOperator(res, rhs, Y, Xpde)
 
-# Definition of the initial guess
 npde = Gridap.FESpaces.num_free_dofs(Ypde)
 ncon = Gridap.FESpaces.num_free_dofs(Ycon)
-x0 = zeros(npde + ncon);
-println(npde)
-println(ncon)
-# Overall, we built a GridapPDENLPModel, which implements the [NLPModels.jl](https://github.com/JuliaSmoothOptimizers/NLPModels.jl) API.
-nlp = GridapPDENLPModel(x0, f, trian, Ypde, Ycon, Xpde, Xcon, op, name = "Control elastic membrane")
+
+nlp = GridapPDENLPModel(
+  zeros(npde + ncon),
+  f,
+  dΩ,
+  Ypde,
+  Ycon,
+  Xpde,
+  Xcon,
+  op,
+  lvaru = zeros(ncon),
+  uvaru = ones(ncon),
+  name = "controlelasticmembrane1",
+)
+
 
 (nlp.meta.nvar, nlp.meta.ncon)
-"""
 verbose = 10 # 10
 ν = 1.0
 ϵ = 1e-3
@@ -61,56 +74,27 @@ verbose = 10 # 10
 maxIter = 500
 maxIter_inner = 100
 options =
-  ROSolverOptions(ν = ν,β=1e16, ϵa = ϵ, ϵr = ϵ, verbose = verbose, maxIter = maxIter, spectral = true)
+  ROSolverOptions(ν = ν,β=1e16, ϵa = 0.0, ϵr = 0.0, verbose = verbose, maxIter = maxIter)
 
 
-options2 = ROSolverOptions(spectral = false, psb = true, ϵa = ϵ, ϵr = ϵ, maxIter = maxIter_inner)
+options2 = ROSolverOptions(ϵa = ϵ, ϵr = ϵ, maxIter = maxIter_inner)
 
-solvers = [:Penalization,:Penalization,:fps_solve,:percival]
+solvers = [:L2Penalty,:percival]
 subsolvers =
-  [:R2,:R2N,:None,:None]
+  [:R2,:None]
 solver_options = [
   options,
-  options,
-  options,
-  options,
-]
+  options,]
 subsolver_options = [
   options2,
-  options2,
-  options2,
-  options2,
-]
-models = [
-  :None,:LBFGSModel,:None,:None
-]
-# model
-
-meta = OptimizationProblems.meta
-problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0), :]
-
-
-problem = problem_list[rand(1:size(problem_list)[1]),:]
-
-nlp = eval(Meta.parse(problem.name))()
+  options2,]
 
 x = benchmark_table(
     nlp,
-    models,
     solvers,
     subsolvers,
     solver_options,
     subsolver_options,
     tol = ϵ,
-    tex = true
+    tex = false
 );
-
-
-"""
-stats = Penalization(nlp,options,subsolver_options=options2)
-yfv = stats.solution[1:Gridap.FESpaces.num_free_dofs(nlp.pdemeta.Ypde)]
-yh  = FEFunction(nlp.pdemeta.Ypde, yfv)
-ufv = stats.solution[1+Gridap.FESpaces.num_free_dofs(nlp.pdemeta.Ypde):end]
-uh  = FEFunction(nlp.pdemeta.Ycon, ufv)
-writevtk(nlp.pdemeta.tnrj.trian,"results",cellfields=["uh"=>uh, "yh"=>yh])
-"""

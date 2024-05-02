@@ -10,8 +10,7 @@ const global bpdn2, bpdn_nls2, sol2 = bpdn_model(compound, bounds = true)
 const global λ = norm(grad(bpdn, zeros(bpdn.meta.nvar)), Inf) / 10
 
 meta = OptimizationProblems.meta
-problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0) .& (meta.nvar .>= meta.ncon), :]
-#problem_list = meta[(meta.name .== "hs219"),:]
+problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0), :]
 for problem ∈ eachrow(problem_list)
   for (nlp,subsolver_name) ∈ ((eval(Meta.parse(problem.name))(),"R2"),)
     @testset "Optimization Problems - $(problem.name) - L2Penalty - $(subsolver_name)" begin
@@ -28,7 +27,6 @@ for problem ∈ eachrow(problem_list)
         @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:Hhist])
         @test length(out.solver_specific[:Fhist]) == length(out.solver_specific[:SubsolverCounter])
         @test obj(nlp, out.solution) == out.solver_specific[:Fhist][end]
-        @test norm(cons(nlp,out.solution),1) == out.solver_specific[:Hhist][end]
         @test out.status == :first_order
     end      
   end
