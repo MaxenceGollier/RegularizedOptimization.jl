@@ -29,6 +29,7 @@ function L2Penalty(nlp::AbstractNLPModel, args...; kwargs...)
   set_solver_specific!(stats, :Hhist, outdict[:Hhist])
   set_solver_specific!(stats, :NonSmooth, outdict[:NonSmooth])
   set_solver_specific!(stats, :SubsolverCounter, outdict[:Chist])
+  set_solver_specific!(stats, :SubHist, outdict[:SubHist])
   return stats
 end
   
@@ -42,16 +43,16 @@ function L2Penalty(
   x0::AbstractVector{R};
   subsolver_logger::Logging.AbstractLogger = Logging.NullLogger(),
   subsolver = R2,
-  subsolver_options = ROSolverOptions(ϵa = options.ϵa,verbose = 10),
+  subsolver_options = ROSolverOptions(ϵa = options.ϵa),
   selected::AbstractVector{<:Integer} = 1:length(x0),
+  benchmark = false,
+  ϵ_benchm = 0.0,
   kwargs...,
 ) where {F <: Function, G <: Function,C<: Function, Jac <: Function, R <: Real}
   start_time = time()
   elapsed_time = 0.0
   ϵ = options.ϵa
-  ϵ_subsolver = subsolver_options.ϵa
-  ϵ_subsolver_init = subsolver_options.ϵa
-  ϵ_subsolver = copy(ϵ_subsolver_init)
+
   ϵr = options.ϵr
   verbose = options.verbose
   maxIter = options.maxIter
@@ -59,7 +60,6 @@ function L2Penalty(
   σmin = options.σmin
   ν = options.ν
   iter = 0
-  ϵ_benchmark = 1e-6
 
   if verbose == 0
     ptf = Inf
@@ -94,6 +94,7 @@ function L2Penalty(
   Fobj_hist = zeros(maxIter)
   Hobj_hist = zeros(maxIter)
   Complex_hist = zeros(Int, maxIter)
+  Subsolver_hist_ξ = zeros(maxIter)
   if verbose > 0
     #! format: off
     @info @sprintf "%6s %6s %8s %8s %7s %8s %7s" "iter" "sub-iter" "f(x)" "h(x)" "√ξ" "τ" "‖x‖"
@@ -110,8 +111,7 @@ function L2Penalty(
   while !(optimal || tired)
     k = k + 1
     elapsed_time = time() - start_time
-    Fobj_hist[k] = fk
-    Hobj_hist[k] = hk
+
 
     # define model
     ψ = shifted(1.0,c!,J!,J_coo,b,xk)
@@ -121,13 +121,24 @@ function L2Penalty(
     prox!(s, ψ, zero(xk), 1.0)
     Complex_hist[k] += 1
     mks = mk(s)
+
+    hk = h_norm(ψ.b)
+    fk = f(xk)
+    Fobj_hist[k] = fk
+    Hobj_hist[k] = hk
+
     ξ1 = hk - mks
     ξ1 ≥ 0 || error("L2Penalty: prox-gradient step should produce a decrease but ξ = $(ξ1)")
+
+    if benchmark && hk < ϵ_benchm
+      println(hk)
+      optimal = true
+      continue
+    end
 
     if ξ1 ≥ 0 && k == 1
       ϵ_increment = ϵr * sqrt(ξ1)
       ϵ += ϵ_increment  # make stopping test absolute and relative
-      ϵ_subsolver += ϵ_increment
     end
     if sqrt(ξ1) < ϵ && k > 1
       # the current xk is approximately first-order stationary
@@ -135,29 +146,20 @@ function L2Penalty(
       continue
     end
 
-    if norm(ψ.b) < ϵ_benchmark ## for benchmarking
-      optimal = true
-      continue
-    end
-
-    s, iter, _ = with_logger(subsolver_logger) do
-      subsolver(f, ∇f!, CompositeNormL2(τk,c!,J!,J_coo,b), subsolver_options, xk)
+    s, iter, stats = with_logger(subsolver_logger) do
+      subsolver(f, ∇f!, CompositeNormL2(τk,c!,J!,J_coo,b), subsolver_options, xk;benchmark = benchmark, ϵ_benchm = ϵ_benchm)
     end
 
     Complex_hist[k] = iter 
+    Subsolver_hist_ξ[k+1] = stats[:ξ]
 
     xk .=  s
-    fk = f(xk)
-    c!(b,xk[selected])
-    hk = h_norm(b)
-    hk == -Inf && error("nonsmooth term is not proper")
 
     if (verbose > 0) && (k % ptf == 0)
       #! format: off
       @info @sprintf "%6d %6d %8.1e %8.1e %7.1e %8.1e %7.1e" k iter fk hk sqrt(ξ1) τk norm(xk)
       #! format: on
     end
-        
 
     tired = k ≥ maxIter || elapsed_time > maxTime
     τk = τk + β
@@ -188,6 +190,7 @@ function L2Penalty(
     :Fhist => Fobj_hist[1:k],
     :Hhist => Hobj_hist[1:k],
     :Chist => Complex_hist[1:k],
+    :SubHist => Subsolver_hist_ξ[1:k],
     :NonSmooth => h,
     :status => status,
     :fk => fk,

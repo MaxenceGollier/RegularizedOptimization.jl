@@ -51,15 +51,15 @@ function benchmark_table(
   f::AbstractNLPModel,
   solvers,
   subsolvers,
-  solver_options,
-  subsolver_options;
-  tol = 1e-6,
+  maxIter,
+  maxIter_inner,
+  verbose,
+  ϵ;
   tex::Bool = false,
 )
   solver_names = [
-    "$(solvername(solver))$(subsolvername(subsolver))$(options_str(opt, solver, subsolver_opt, subsolver))"
-    for (solver, opt, subsolver, subsolver_opt) in
-    zip(solvers, solver_options, subsolvers, subsolver_options)
+    "$(solvername(solver))$(subsolvername(subsolver))"
+    for (solver, subsolver) in zip(solvers, subsolvers)
   ]
   nf_evals = []
   n∇f_evals = []
@@ -68,26 +68,25 @@ function benchmark_table(
   nH_evals = []
   solver_stats = []
   
-  b = zeros(Float64,nlp.meta.ncon)
   cb = (nlp,solver,stats) -> begin ## Callback
-      cons!(nlp,solver.x,b) 
-      if norm(solver.Jx'*solver.y - solver.gx) < tol && norm(b) < tol
+      if stats.dual_feas < ϵ && stats.primal_feas < ϵ
         stats.status = :user
       end
     end
 
-  for (solver, subsolver, opt, sub_opt) in
-      zip(solvers, subsolvers, solver_options, subsolver_options)
+  for (solver, subsolver) in zip(solvers, subsolvers)
     @info " using $solver with subsolver = $subsolver" 
     if solver == :percival
-      solver_out = eval(solver)(f,rtol = 0.0,atol = 0.0,callback=cb)
+      solver_out = eval(solver)(f,rtol = 0.0,atol = 0.0,max_iter = maxIter,verbose = 1,max_time = 240.0,callback=cb)
       println(solver_out.status)
     else
       solver_out = eval(solver)(
         f,
-        opt,
+        ROSolverOptions(ϵa = 0.0, ϵr = 0.0,maxIter = maxIter),
         subsolver = eval(subsolver),
-        subsolver_options = sub_opt,
+        subsolver_options = ROSolverOptions(ϵa = 0.0, ϵr = 0.0, maxIter = maxIter_inner),
+        benchmark = true,
+        ϵ_benchm = ϵ
       )
     end
 
@@ -95,13 +94,9 @@ function benchmark_table(
     push!(n∇f_evals, grad_evals(f))
     push!(nc_evals, neval_cons(f))
     push!(nJ_evals,neval_jac(f))
-    push!(nH_evals,neval_hess(f))
+    push!(nH_evals,neval_hess(f) + neval_hprod(f))
+    push!(solver_stats, solver_out)
 
-    if solver == :percival
-      push!(solver_stats, measure)
-    else
-      push!(solver_stats, solver_out)
-    end
     reset!(f)
   end
 
@@ -109,16 +104,17 @@ function benchmark_table(
     header = [
       "solver",
       L"$f(x)$",
-      L"$||c(x)||_2$",
-      L"$\xi$",
+      L"$||c(x)||₂$",
+      L"||J(x)ᵀ y + ∇f(x)||₂",
       L"$\# \ f$",
       L"$\# \ \nabla f$",
-      L"$\# \ \nabla^2f$",
+      L"$\# \ \nabla^2f v$",
       L"$\# \ c$",
       L"$\# \ J$",
+      "time"
     ]
   else
-    header = ["solver", "f(x)", " ||c(x)||₂", "||J(x)^T y - ∇f(x)||₂", "# f", "# ∇f", "# ∇²f", "# c", "# J"]
+    header = ["solver", "f(x)", " ||c(x)||₂", "||J(x)ᵀ y + ∇f(x)||₂", "# f", "# ∇f", "# ∇²f v", "# c", "# J", "time"]
   end
   nh = length(header)
   n_solvers = length(solver_names)
@@ -131,24 +127,27 @@ function benchmark_table(
 
     if solvers[i] == :percival
       fx = solver_out.objective
-      hx = norm(cons(f,x))
-      ξ = solver_out
+      hx = solver_out.primal_feas
+      ξ = solver_out.dual_feas
     else
       fx = solver_out.solver_specific[:Fhist][end]
       hx = solver_out.solver_specific[:Hhist][end]
-      ξ = 0.0 #solver_out.subsolver.x
-      println(fieldnames(typeof(solver_out)))
+      println(solver_out.solver_specific[:SubHist])
+      ξ = solver_out.solver_specific[:SubHist][end]
     end
     nf = nf_evals[i]
     n∇f = n∇f_evals[i]
     nc = nc_evals[i]
     nJ = nJ_evals[i]
     nH = nH_evals[i]
-    data[i, :] .= [sname, fx, hx, ξ, nf, n∇f,nH, nc, nJ]
+    println(fieldnames(typeof(solver_out)))
+    println(fieldnames(typeof(solver_out.solver_specific)))
+    t = solver_out.elapsed_time
+    data[i, :] .= [sname, fx, hx, ξ, nf, n∇f,nH, nc, nJ,t]
     
   end
 
-  print_formats = ft_printf(["%s", "%7.2e", "%7.1e", "%7.1e","%i", "%i", "%i", "%i","%i"], 1:nh)
+  print_formats = ft_printf(["%s", "%7.2e", "%7.1e", "%7.1e","%i", "%i", "%i", "%i","%i","%7.2e"], 1:nh)
 
   title = f.meta.name
   

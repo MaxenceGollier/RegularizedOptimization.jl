@@ -135,12 +135,14 @@ function R2(
   options::ROSolverOptions{R},
   x0::AbstractVector{R};
   selected::AbstractVector{<:Integer} = 1:length(x0),
+  benchmark = false,
+  ϵ_benchm = 0.0,
   kwargs...,
 ) where {F <: Function, G <: Function, H, R <: Real}
   start_time = time()
   elapsed_time = 0.0
   solver = R2Solver(x0, options, similar(x0, 0), similar(x0, 0))
-  k, status, fk, hk, ξ = R2!(solver, f, ∇f!, h, options, x0; selected = selected)
+  k, status, fk, hk, ξ = R2!(solver, f, ∇f!, h, options, x0; selected = selected,benchmark = benchmark, ϵ_benchm = ϵ_benchm)
   elapsed_time = time() - start_time
   outdict = Dict(
     :Fhist => solver.Fobj_hist[1:k],
@@ -153,6 +155,7 @@ function R2(
     :ξ => ξ,
     :elapsed_time => elapsed_time,
   )
+  println(ξ)
   return solver.xk, k, outdict
 end
 
@@ -194,7 +197,10 @@ function R2!(
   options::ROSolverOptions{R},
   x0::AbstractVector{R};
   selected::AbstractVector{<:Integer} = 1:length(x0),
+  benchmark = false,
+  ϵ_benchm = 0.0
 ) where {F <: Function, G <: Function, H, R <: Real}
+  println(benchmark)
   start_time = time()
   elapsed_time = 0.0
   ϵ = options.ϵa
@@ -307,6 +313,17 @@ function R2!(
     hkn = @views h(xkn[selected])
     hkn == -Inf && error("nonsmooth term is not proper")
 
+    if benchmark
+      ψ.b .= zero(ψ.b)
+      prox!(s,ψ,∇fk,Inf)
+      if norm(s) < ϵ_benchm
+        sqrt_ξ_νInv = norm(s)
+        optimal = true
+        continue
+      end
+
+    end
+
     Δobj = (fk + hk) - (fkn + hkn) + max(1, abs(fk + hk)) * 10 * eps()
     ρk = Δobj / ξ
 
@@ -345,6 +362,7 @@ function R2!(
       @. mν∇fk = -ν * ∇fk
       
     end
+    
   end
 
   if verbose > 0

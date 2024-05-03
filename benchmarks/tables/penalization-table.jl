@@ -3,10 +3,10 @@ using OptimizationProblems, ADNLPModels, OptimizationProblems.ADNLPProblems
 using Percival
 using Random
 
-using Gridap, PDENLPModels,Krylov
+using Gridap, PDENLPModels
 
 
-n = 20
+n = 40
 
 # Domain
 domain = (-1, 1, -1, 1)
@@ -59,42 +59,29 @@ nlp = GridapPDENLPModel(
   Xpde,
   Xcon,
   op,
-  lvaru = zeros(ncon),
-  uvaru = ones(ncon),
   name = "controlelasticmembrane1",
 )
 
+println(nlp.meta.ncon)
+println(nlp.meta.nvar)
 
-(nlp.meta.nvar, nlp.meta.ncon)
-verbose = 10 # 10
-ν = 1.0
-ϵ = 1e-3
-ϵi = 0.0
-ϵri = 0.0
-maxIter = 500
+
+maxIter = 1000
 maxIter_inner = 100
-options =
-  ROSolverOptions(ν = ν,β=1e16, ϵa = 0.0, ϵr = 0.0, verbose = verbose, maxIter = maxIter)
-
-
-options2 = ROSolverOptions(ϵa = ϵ, ϵr = ϵ, maxIter = maxIter_inner)
+ϵ = 1e-6
+verbose = 0
 
 solvers = [:L2Penalty,:percival]
 subsolvers =
   [:R2,:None]
-solver_options = [
-  options,
-  options,]
-subsolver_options = [
-  options2,
-  options2,]
 
 x = benchmark_table(
     nlp,
     solvers,
     subsolvers,
-    solver_options,
-    subsolver_options,
-    tol = ϵ,
-    tex = false
+    maxIter,
+    maxIter_inner,
+    verbose,
+    ϵ;
+    tex = true
 );
