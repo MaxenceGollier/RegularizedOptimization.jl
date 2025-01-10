@@ -36,7 +36,7 @@ macro wrappedallocs(expr)
 end
 
 # Test non allocating solve!
-@testset "allocs" begin
+@testset "allocs - bpdn" begin
   for (h, h_name) ∈ ((NormL0(λ), "l0"), (NormL1(λ), "l1"))
     for solver ∈ (:R2Solver,)
       reg_nlp = RegularizedNLPModel(bpdn, h)
@@ -45,4 +45,15 @@ end
       @test @wrappedallocs(solve!(solver, reg_nlp, stats)) == 0
     end
   end
+end
+
+
+@testset "allocs - hs8" begin
+  nlp = hs8()
+  h = NormL1(1.0)
+  reg_nlp = RegularizedNLPModel(nlp, h)
+  solver = ALSolver(reg_nlp)
+  stats = GenericExecutionStats(nlp)
+  @test @wrappedallocs(solve!(solver, regnlp, stats, atol = 1e-6))
+
 end
