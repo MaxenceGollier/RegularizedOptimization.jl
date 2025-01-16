@@ -269,6 +269,11 @@ function SolverCore.solve!(
     @info log_header(
       [:iter, :sub_it, :obj, :cviol, :μ, :normy, :sub_tol, :sub_status],
       [Int, Int, Float64, Float64, Float64, Float64, Float64, Symbol],
+      hdr_override = Dict{Symbol, String}( 
+        :sub_it => "inner",
+        :obj => "f(x)",
+        :normy => "‖y‖",
+      ),
     )
     @info log_row(Any[iter, subiters, objx, cviol, mu, norm(solver.y), subtol])
   end
