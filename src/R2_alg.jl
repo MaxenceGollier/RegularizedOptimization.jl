@@ -132,7 +132,7 @@ For advanced usage, first define a solver "R2Solver" to preallocate the memory u
     solver = R2Solver(reg_nlp)
     solve!(solver, reg_nlp)
 
-    stats = GenericExecutionStats(reg_nlp.model)
+    stats = RegularizedExecutionStats(reg_nlp)
     solver = R2Solver(reg_nlp)
     solve!(solver, reg_nlp, stats)
 
@@ -249,7 +249,7 @@ function R2(
     :status => stats.status,
     :fk => stats.solver_specific[:smooth_obj],
     :hk => stats.solver_specific[:nonsmooth_obj],
-    :ξ => stats.solver_specific[:xi],
+    :ξ => stats.dual_feas,
     :elapsed_time => stats.elapsed_time,
   )
   return stats.solution, stats.iter, outdict
@@ -302,7 +302,7 @@ function R2(reg_nlp::AbstractRegularizedNLPModel; kwargs...)
   kwargs_dict = Dict(kwargs...)
   max_iter = pop!(kwargs_dict, :max_iter, 10000)
   solver = R2Solver(reg_nlp, max_iter = max_iter)
-  stats = GenericExecutionStats(reg_nlp.model)
+  stats = GenericExecutionStats(reg_nlp.model) # TODO: change this to `stats = RegularizedExecutionStats(reg_nlp)` when FHist etc. is ruled out.
   cb = pop!(
     kwargs_dict,
     :callback,
@@ -426,7 +426,6 @@ function SolverCore.solve!(
   (ξ < 0 && sqrt_ξ_νInv > neg_tol) &&
     error("R2: prox-gradient step should produce a decrease but ξ = $(ξ)")
 
-  set_solver_specific!(stats, :xi, sqrt_ξ_νInv)
   set_status!(
     stats,
     get_status(
@@ -511,7 +510,6 @@ function SolverCore.solve!(
     (ξ < 0 && sqrt_ξ_νInv > neg_tol) &&
       error("R2: prox-gradient step should produce a decrease but ξ = $(ξ)")
 
-    set_solver_specific!(stats, :xi, sqrt_ξ_νInv)
     set_status!(
       stats,
       get_status(
@@ -550,6 +548,7 @@ function SolverCore.solve!(
   end
 
   set_solution!(stats, xk)
+  set_residuals!(stats, zero(eltype(xk)), sqrt_ξ_νInv)
   return stats
 end
 
