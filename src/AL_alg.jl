@@ -84,7 +84,7 @@ For advanced usage, first define a solver "ALSolver" to preallocate the memory u
     solver = ALSolver(reg_nlp)
     solve!(solver, reg_nlp)
 
-    stats = GenericExecutionStats(reg_nlp.model)
+    stats = RegularizedExecutionStats(reg_nlp.model)
     solver = ALSolver(reg_nlp)
     solve!(solver, reg_nlp, stats)
 
@@ -145,7 +145,7 @@ mutable struct ALSolver{T, V, M, ST} <: AbstractOptimizationSolver
   has_bnds::Bool
   sub_model::AugLagModel{M, T, V}
   sub_solver::ST
-  sub_stats::GenericExecutionStats{T, V, V, Any}
+  sub_stats::GenericExecutionStats{T, V}
 end
 
 function ALSolver(reg_nlp::AbstractRegularizedNLPModel{T, V}; kwargs...) where {T, V}
@@ -182,7 +182,7 @@ function SolverCore.solve!(
   model::AbstractRegularizedNLPModel;
   kwargs...,
 )
-  stats = GenericExecutionStats(model.model)
+  stats = RegularizedExecutionStats(model)
   solve!(solver, model, stats; kwargs...)
 end
 

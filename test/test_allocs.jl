@@ -57,7 +57,7 @@ end
   h = NormL1(1.0)
   reg_nlp = RegularizedNLPModel(nlp, h)
   solver = ALSolver(reg_nlp)
-  stats = GenericExecutionStats(nlp)
-  @test @wrappedallocs(solve!(solver, reg_nlp, stats, atol = 1e-6))
+  stats = RegularizedExecutionStats(reg_nlp)
+  @test @wrappedallocs(solve!(solver, reg_nlp, stats, atol = 1e-6)) == 0
 
 end
