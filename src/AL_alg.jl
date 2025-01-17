@@ -267,15 +267,16 @@ function SolverCore.solve!(
 
   if verbose > 0
     @info log_header(
-      [:iter, :sub_it, :obj, :cviol, :μ, :normy, :sub_tol, :sub_status],
-      [Int, Int, Float64, Float64, Float64, Float64, Float64, Symbol],
+      [:iter, :sub_it, :fx, :hx, :cviol, :μ, :normy, :sub_tol, :sub_status],
+      [Int, Int, Float64, Float64, Float64, Float64, Float64, Float64, Symbol],
       hdr_override = Dict{Symbol, String}( 
         :sub_it => "inner",
-        :obj => "f(x)",
+        :fx => "f(x)",
+        :hx => "h(x)",
         :normy => "‖y‖",
       ),
     )
-    @info log_row(Any[iter, subiters, objx, cviol, mu, norm(solver.y), subtol])
+    @info log_row(Any[iter, subiters, fx, hx, cviol, mu, norm(solver.y), subtol])
   end
 
   callback(reg_nlp, solver, stats)
@@ -360,7 +361,7 @@ function SolverCore.solve!(
     done = stats.status != :unknown
 
     if verbose > 0 && (mod(stats.iter, verbose) == 0 || done)
-      @info log_row(Any[iter, subiters, objx, cviol, mu, norm(solver.y), subtol, subout.status])
+      @info log_row(Any[iter, subiters, fx, hx, cviol, mu, norm(solver.y), subtol, subout.status])
     end
 
     if !done
