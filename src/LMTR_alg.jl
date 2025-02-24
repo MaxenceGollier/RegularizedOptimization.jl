@@ -253,7 +253,7 @@ function LMTR(
       Jk = jac_op_residual(nls, xk)
       jtprod_residual!(nls, xk, Fk, ∇fk)
       σmax = opnorm(Jk)
-      νInv = (1 + θ) * σmax^2 # ‖J'J‖ = ‖J‖²
+      νInv = (1 + θ) * σmax^2  # ‖J'J‖ = ‖J‖²
       @. mν∇fk = -∇fk / νInv
     end
 
