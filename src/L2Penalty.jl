@@ -260,7 +260,7 @@ function SolverCore.solve!(
 		fx = solver.sub_stats.solver_specific[:smooth_obj]
 		hx_prev = copy(hx)
 		hx = solver.sub_stats.solver_specific[:nonsmooth_obj]/τ
-		sqrt_ξ_νInv  =  solver.sub_stats.solver_specific[:xi]
+		sqrt_ξ_νInv  =  solver.sub_stats.dual_feas
 
 		shift!(ψ, x)
 		prox!(s, ψ, s0, 1.0)
@@ -406,7 +406,7 @@ function solve!(
 	H = [[-Q reg_nlp.h.A'];[reg_nlp.h.A αₖ*opEye(m,m)]]
 	x1,stats_minres = minres_qlp(H,u1)
 
-	if norm(x1[n+1:n+m]) <= Δ && reg_nlp.h.full_row_rank
+	if norm(x1[n+1:n+m]) <= Δ #&& reg_nlp.h.full_row_rank
 		set_solution!(stats,x1[1:n])
 		return
 	end
