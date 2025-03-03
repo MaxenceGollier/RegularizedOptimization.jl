@@ -7,8 +7,8 @@ using LinearAlgebra, Logging, Printf
 using ProximalOperators, TSVD
 
 # dependencies from us
-using LinearOperators,
-  NLPModels, NLPModelsModifiers, RegularizedProblems, ShiftedProximalOperators, SolverCore
+using Krylov, LinearOperators,
+  NLPModels, NLPModelsModifiers, RegularizedProblems, ShiftedProximalOperators, SolverCore, SparseMatricesCOO
 using Percival: AugLagModel, update_y!, update_μ!
 
 include("utils.jl")
@@ -25,5 +25,6 @@ include("R2DH.jl")
 include("R2NModel.jl")
 include("R2N.jl")
 include("AL_alg.jl")
+include("L2Penalty.jl")
 
 end  # module RegularizedOptimization
