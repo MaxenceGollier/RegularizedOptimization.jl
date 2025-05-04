@@ -7,7 +7,7 @@ using LinearAlgebra, Logging, Printf
 using Arpack, ProximalOperators
 
 # dependencies from us
-using LinearOperators,
+using Krylov, LinearOperators,
   NLPModels, NLPModelsModifiers, RegularizedProblems, ShiftedProximalOperators, SolverCore, SparseMatricesCOO
 using Percival: AugLagModel, update_y!, update_μ!
 
@@ -19,6 +19,7 @@ include("splitting.jl")
 include("TR_alg.jl")
 include("TRDH_alg.jl")
 include("R2_alg.jl")
+include("L2Penalty.jl")
 include("LM_alg.jl")
 include("LMTR_alg.jl")
 include("R2DH.jl")

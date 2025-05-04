@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 Arpack = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearOperators = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -19,10 +20,13 @@ SolverCore = "ff4d7338-4cf1-434d-91df-b86cb86fb843"
 SparseMatricesCOO = "fa32481b-f100-4b48-8dc8-c62f61b13870"
 
 [compat]
+ADNLPModels = "0.8.12"
 Arpack = "0.5"
+Krylov = "0.9.10"
 LinearOperators = "2.10.0"
 NLPModels = "0.19, 0.20, 0.21"
 NLPModelsModifiers = "0.7"
+OptimizationProblems = "0.9.0"
 Percival = "0.7.2"
 ProximalOperators = "0.15"
 RegularizedProblems = "0.1.1"
@@ -32,10 +36,12 @@ SparseMatricesCOO = "0.2.4"
 julia = "^1.6.0"
 
 [extras]
+ADNLPModels = "54578032-b7ea-4c30-94aa-7cbd1cce6c9a"
+OptimizationProblems = "5049e819-d29b-5fba-b941-0eee7e64c1c6"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 RegularizedProblems = "ea076b23-609f-44d2-bb12-a4ae45328278"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestSetExtensions = "98d24dd4-01ad-11ea-1b02-c9a08f80db04"
 
 [targets]
-test = ["Random", "RegularizedProblems", "Test", "TestSetExtensions"]
+test = ["ADNLPModels", "OptimizationProblems", "Random", "RegularizedProblems", "Test", "TestSetExtensions"]
