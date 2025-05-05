@@ -30,7 +30,7 @@ function L2PenaltySolver(nlp::AbstractNLPModel{T, V}; subsolver = R2Solver) wher
 
   # Allocate ψ = ||c(x) + J(x)s|| to compute θ
   ψ = ShiftedCompositeNormL2(
-    1.0,
+    one(T),
     (c, x) -> cons!(nlp, x, c),
     (j, x) -> jac_coord!(nlp, x, j.vals),
     A,
@@ -39,7 +39,7 @@ function L2PenaltySolver(nlp::AbstractNLPModel{T, V}; subsolver = R2Solver) wher
 
   # Allocate sub_ψ = ||c(x)|| to solve min f(x) + τ||c(x)||
   sub_ψ =
-    CompositeNormL2(1.0, (c, x) -> cons!(nlp, x, c), (j, x) -> jac_coord!(nlp, x, j.vals), A, b)
+    CompositeNormL2(one(T), (c, x) -> cons!(nlp, x, c), (j, x) -> jac_coord!(nlp, x, j.vals), A, b)
   sub_nlp = RegularizedNLPModel(nlp, sub_ψ)
   sub_stats = GenericExecutionStats(nlp)
   if subsolver == R2NSolver
@@ -124,7 +124,7 @@ You can also use the `sub_callback` keyword argument which has exactly the same 
 function L2Penalty(
   nlp::AbstractNLPModel{T, V};
   subsolver = R2Solver,
-  kwargs...,
+  kwargs...
 ) where {T <: Real, V}
   if !equality_constrained(nlp)
     error("L2Penalty: This algorithm only works for equality contrained problems.")
@@ -151,9 +151,9 @@ function SolverCore.solve!(
   max_time::T = T(30.0),
   max_eval::Int = -1,
   sub_max_eval::Int = -1,
-  max_decreas_iter = 10,
-  verbose = 0,
-  sub_verbose = 0,
+  max_decreas_iter::Int = 10,
+  verbose::Int = 0,
+  sub_verbose::Int = 0,
   τ::T = T(100),
   β1::T = τ,
   β2::T = T(0.1),
@@ -223,23 +223,44 @@ function SolverCore.solve!(
 
   while !done
     model = RegularizedNLPModel(nlp, sub_ψ)
-    solve!(
-      solver.subsolver,
-      model,
-      solver.sub_stats;
-      callback = sub_callback,
-      x = x,
-      atol = ktol,
-      rtol = T(0),
-      neg_tol = neg_tol,
-      verbose = sub_verbose,
-      max_iter = sub_max_iter,
-      max_time = max_time - stats.elapsed_time,
-      max_eval = min(rem_eval, sub_max_eval),
-      σmin = β4,
-      ν = 1/max(β4, β3*τ),
-      kwargs...,
-    )
+
+    if isa(solver.subsolver, R2Solver)
+      solve!(
+        solver.subsolver,
+        model,
+        solver.sub_stats;
+        callback = sub_callback,
+        x = x,
+        atol = ktol,
+        rtol = T(0),
+        neg_tol = neg_tol,
+        verbose = sub_verbose,
+        max_iter = sub_max_iter,
+        max_time = max_time - stats.elapsed_time,
+        max_eval = min(rem_eval, sub_max_eval),
+        σmin = β4,
+        ν = 1/max(β4, β3*τ)
+      )
+    else
+      solve!(
+        solver.subsolver,
+        model,
+        solver.sub_stats;
+        callback = sub_callback,
+        x = x,
+        atol = ktol,
+        rtol = T(0),
+        neg_tol = neg_tol,
+        verbose = sub_verbose,
+        max_iter = sub_max_iter,
+        max_time = max_time - stats.elapsed_time,
+        max_eval = min(rem_eval, sub_max_eval),
+        σmin = β4,
+        σk = max(β4, β3*τ),
+        sub_kwargs = Dict{Symbol, Any}()
+      )
+    end
+
 
     x .= solver.sub_stats.solution
     fx = solver.sub_stats.solver_specific[:smooth_obj]
@@ -362,7 +383,7 @@ function SolverCore.solve!(
   reg_nlp::AbstractRegularizedNLPModel{T, V},
   stats::GenericExecutionStats{T, V, V};
   x = reg_nlp.model.meta.x0,
-  ν = T(1),
+  σk = T(1),
   atol = eps(T)^(0.5),
   max_time = T(30),
   max_iter = 10000,
@@ -390,6 +411,11 @@ function SolverCore.solve!(
   H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
   x1, stats_minres = minres_qlp(H, u1)
 
+  if norm(reg_nlp.h.b) - obj(reg_nlp, x1[1:n]) < 0 # The problem is not convex, retreat to Cauchy point.
+    set_solution!(stats, x)
+    return
+  end
+  
   if norm(x1[(n + 1):(n + m)]) <= Δ
     set_solution!(stats, x1[1:n])
     return
