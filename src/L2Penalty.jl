@@ -6,20 +6,28 @@ mutable struct L2PenaltySolver{
   T <: Real,
   V <: AbstractVector{T},
   S <: AbstractOptimizationSolver,
+  PB <: AbstractRegularizedNLPModel,
+  G1 <: ShiftedCompositeNormL2{T},
+  G2 <: CompositeNormL2{T}
 } <: AbstractOptimizationSolver
   x::V
+  y::V
+  dual_res::V
   s::V
   s0::V
-  ψ::ShiftedCompositeNormL2
-  sub_ψ::CompositeNormL2
+  ψ::G1
+  sub_h::G2
   subsolver::S
-  sub_stats::GenericExecutionStats{T, V, V, Any}
+  subpb::PB
+  substats::GenericExecutionStats{T, V, V, T}
 end
 
 function L2PenaltySolver(nlp::AbstractNLPModel{T, V}; subsolver = R2Solver) where {T, V}
   x0 = nlp.meta.x0
   x = similar(x0)
   s = similar(x0)
+  y = similar(x0, nlp.meta.ncon)
+  dual_res = similar(x0)
   s0 = zero(x0)
 
   # Allocating variables for the ShiftedProximalOperator structure
@@ -37,18 +45,19 @@ function L2PenaltySolver(nlp::AbstractNLPModel{T, V}; subsolver = R2Solver) wher
     b,
   )
 
-  # Allocate sub_ψ = ||c(x)|| to solve min f(x) + τ||c(x)||
-  sub_ψ =
+  # Allocate sub_h = ||c(x)|| to solve min f(x) + τ||c(x)||
+  sub_h =
     CompositeNormL2(one(T), (c, x) -> cons!(nlp, x, c), (j, x) -> jac_coord!(nlp, x, j.vals), A, b)
-  sub_nlp = RegularizedNLPModel(nlp, sub_ψ)
-  sub_stats = GenericExecutionStats(nlp)
+  subnlp = RegularizedNLPModel(nlp, sub_h)
   if subsolver == R2NSolver
-    solver = subsolver(sub_nlp, subsolver = L2_R2N_subsolver)
+    solver = subsolver(subnlp, subsolver = L2_R2N_subsolver)
   else
-    solver = subsolver(sub_nlp)
+    solver = subsolver(subnlp)
   end
+  subpb = RegularizedNLPModel(nlp, sub_h)
+  substats = RegularizedExecutionStats(subpb)
 
-  return L2PenaltySolver(x, s, s0, ψ, sub_ψ, solver, sub_stats)
+  return L2PenaltySolver(x, y, dual_res, s, s0, ψ, sub_h, solver, subpb, substats)
 end
 
 """
@@ -138,9 +147,9 @@ end
 function SolverCore.solve!(
   solver::L2PenaltySolver{T, V},
   nlp::AbstractNLPModel{T, V},
-  stats::GenericExecutionStats{T, V};
+  stats::GenericExecutionStats{T, V, V};
   callback = (args...) -> nothing,
-  sub_callback = (args...) -> nothing,
+  sub_callback::F = (args...) -> nothing,
   x::V = nlp.meta.x0,
   atol::T = √eps(T),
   rtol::T = √eps(T),
@@ -160,14 +169,13 @@ function SolverCore.solve!(
   β3::T = 1/τ,
   β4::T = eps(T),
   kwargs...,
-) where {T, V}
+) where {T, V, F <: Function}
   reset!(stats)
 
   # Retrieve workspace
-  h = NormL2(1.0)
   ψ = solver.ψ
-  sub_ψ = solver.sub_ψ
-  sub_ψ.h = NormL2(τ)
+  sub_h = solver.sub_h
+  sub_h.h = NormL2(τ)
   solver.subsolver.ψ.h = NormL2(τ)
 
   x = solver.x .= x
@@ -175,7 +183,7 @@ function SolverCore.solve!(
   s0 = solver.s0
   shift!(ψ, x)
   fx = obj(nlp, x)
-  hx = h(ψ.b)
+  hx = norm(ψ.b)
 
   if verbose > 0
     @info log_header(
@@ -200,9 +208,7 @@ function SolverCore.solve!(
   rem_eval = max_eval
   start_time = time()
   set_time!(stats, 0.0)
-  set_objective!(stats, fx + hx)
-  set_solver_specific!(stats, :smooth_obj, fx)
-  set_solver_specific!(stats, :nonsmooth_obj, hx)
+  set_objective!(stats, fx)
 
   local θ::T
   prox!(s, ψ, s0, T(1))
@@ -220,15 +226,14 @@ function SolverCore.solve!(
   done = false
 
   n_iter_since_decrease = 0
+  νsub = 1/max(β4, β3*τ)
 
   while !done
-    model = RegularizedNLPModel(nlp, sub_ψ)
-
     if isa(solver.subsolver, R2Solver)
       solve!(
         solver.subsolver,
-        model,
-        solver.sub_stats;
+        solver.subpb,
+        solver.substats;
         callback = sub_callback,
         x = x,
         atol = ktol,
@@ -239,13 +244,13 @@ function SolverCore.solve!(
         max_time = max_time - stats.elapsed_time,
         max_eval = min(rem_eval, sub_max_eval),
         σmin = β4,
-        ν = 1/max(β4, β3*τ)
+        ν = νsub
       )
     else
       solve!(
         solver.subsolver,
-        model,
-        solver.sub_stats;
+        solver.subpb,
+        solver.substats;
         callback = sub_callback,
         x = x,
         atol = ktol,
@@ -256,20 +261,19 @@ function SolverCore.solve!(
         max_time = max_time - stats.elapsed_time,
         max_eval = min(rem_eval, sub_max_eval),
         σmin = β4,
-        σk = max(β4, β3*τ),
+        σk = 1/νsub,
         sub_kwargs = Dict{Symbol, Any}()
       )
     end
 
-
-    x .= solver.sub_stats.solution
-    fx = solver.sub_stats.solver_specific[:smooth_obj]
+    x .= solver.substats.solution
+    fx = solver.substats.solver_specific[:smooth_obj]
     hx_prev = copy(hx)
-    hx = solver.sub_stats.solver_specific[:nonsmooth_obj]/τ
-    sqrt_ξ_νInv = solver.sub_stats.dual_feas
+    hx = solver.substats.solver_specific[:nonsmooth_obj]/τ
+    sqrt_ξ_νInv = solver.substats.dual_feas
 
     shift!(ψ, x)
-    prox!(s, ψ, s0, 1.0)
+    prox!(s, ψ, s0, T(1))
 
     θ = hx - ψ(s)
     sqrt_θ = θ ≥ 0 ? sqrt(θ) : sqrt(-θ)
@@ -279,11 +283,13 @@ function SolverCore.solve!(
 
     if sqrt_θ > ktol
       τ = τ + β1
-      sub_ψ.h = NormL2(τ)
+      sub_h.h = NormL2(τ)
       solver.subsolver.ψ.h = NormL2(τ)
+      νsub = 1/max(β4, β3*τ)
     else
       n_iter_since_decrease = 0
       ktol = max(β2^(ceil(log(β2, sqrt_ξ_νInv/tol_init)))*ktol, atol) #the β^... allows to directly jump to a sufficiently small ϵₖ
+      νsub = 1/solver.substats.solver_specific[:sigma]
     end
     if sqrt_θ > ktol && hx_prev ≥ hx
       n_iter_since_decrease += 1
@@ -292,25 +298,27 @@ function SolverCore.solve!(
     end
 
     solved =
-      (sqrt_θ ≤ atol && solver.sub_stats.status == :first_order) ||
-      (θ < 0 && sqrt_θ ≤ neg_tol && solver.sub_stats.status == :first_order)
+      (sqrt_θ ≤ atol && solver.substats.status == :first_order) ||
+      (θ < 0 && sqrt_θ ≤ neg_tol && solver.substats.status == :first_order)
     (θ < 0 && sqrt_θ > neg_tol) &&
       error("L2Penalty: prox-gradient step should produce a decrease but θ = $(θ)")
 
     verbose > 0 &&
       stats.iter % verbose == 0 &&
       @info log_row(
-        Any[stats.iter, solver.sub_stats.iter, fx, hx, sqrt_θ, sqrt_ξ_νInv, ktol, τ, norm(x)],
+        Any[stats.iter, solver.substats.iter, fx, hx, sqrt_θ, sqrt_ξ_νInv, ktol, τ, norm(x)],
         colsep = 1,
       )
 
     set_iter!(stats, stats.iter + 1)
     rem_eval = max_eval - neval_obj(nlp)
     set_time!(stats, time() - start_time)
-    set_objective!(stats, fx + hx)
-    set_solver_specific!(stats, :smooth_obj, fx)
-    set_solver_specific!(stats, :nonsmooth_obj, hx)
-    set_solver_specific!(stats, :theta, sqrt_θ)
+    set_objective!(stats, fx)
+
+    @. solver.y = solver.subsolver.ψ.q*solver.substats.solver_specific[:sigma]
+    mul!(solver.dual_res, solver.subsolver.ψ.A', solver.y, -one(T), zero(T))
+    @. solver.dual_res += solver.subsolver.∇fk
+    set_residuals!(stats, hx, norm(solver.dual_res))
 
     set_status!(
       stats,
@@ -333,6 +341,7 @@ function SolverCore.solve!(
   end
 
   set_solution!(stats, x)
+  set_constraint_multipliers!(stats, solver.y)
   return stats
 end
 
@@ -378,7 +387,7 @@ function L2_R2N_subsolver(reg_nlp::AbstractRegularizedNLPModel{T, V};) where {T,
   return L2_R2N_subsolver(u1, u2)
 end
 
-function SolverCore.solve!(
+function SolverCore.solve!( # TODO: optimize this code, make it allocation-free + check tolerances
   solver::L2_R2N_subsolver{T, V},
   reg_nlp::AbstractRegularizedNLPModel{T, V},
   stats::GenericExecutionStats{T, V, V};
@@ -386,7 +395,7 @@ function SolverCore.solve!(
   σk = T(1),
   atol = eps(T)^(0.5),
   max_time = T(30),
-  max_iter = 10000,
+  max_iter = 10,
 ) where {T <: Real, V <: AbstractVector{T}}
   start_time = time()
   set_time!(stats, 0.0)
@@ -400,7 +409,7 @@ function SolverCore.solve!(
   u2 = solver.u2
 
   # Create problem
-  @. u1[1:n] = reg_nlp.model.∇f/reg_nlp.model.σ
+  @. u1[1:n] = reg_nlp.model.∇f/reg_nlp.model.σ # - mν∇fk
   @. u1[(n + 1):(n + m)] = -reg_nlp.h.b
 
   αₖ = 0.0
@@ -411,7 +420,7 @@ function SolverCore.solve!(
   H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
   x1, stats_minres = minres_qlp(H, u1)
 
-  if norm(reg_nlp.h.b) - obj(reg_nlp, x1[1:n]) < 0 # The problem is not convex, retreat to Cauchy point.
+  if reg_nlp.h.h.lambda*norm(reg_nlp.h.b) - obj(reg_nlp, x1[1:n]) < 0 && norm(x1[(n + 1):(n + m)]) <= Δ # The problem is not convex, retreat to Cauchy point.
     set_solution!(stats, x)
     return
   end
@@ -420,13 +429,35 @@ function SolverCore.solve!(
     set_solution!(stats, x1[1:n])
     return
   end
-  if stats_minres.inconsistent == true
+  if !reg_nlp.h.full_row_rank && norm(H*x1-u1) ≤ eps(T)^0.3
+
+    # Rank defficient problem, solve bigger problem to find min norm solution.
+    # First compute v = -(AQ^-1 d + b). USE GMRES because this matrix is not hermitian...
+    H = [[-Q-opEye(n,n) opZeros(n, m)];
+         [reg_nlp.h.A opEye(m, m)]]
+    x1, stats_gmres = gmres(H, u1)
+    u = zeros(T, 2*n + 2*m)
+    u[m+2*n+1:end] .= x1[n+1:end]
+
+    H = [[opEye(m,m) LinearOperator(reg_nlp.h.A) opZeros(m, n) opZeros(m, m)]; 
+         [LinearOperator(reg_nlp.h.A') opZeros(n, n) Q+opEye(n,n) opZeros(n, m)];
+         [opZeros(n,m) Q+opEye(n,n) opZeros(n, n) -LinearOperator(reg_nlp.h.A')];
+         [opZeros(m, m) opZeros(m, n) -LinearOperator(reg_nlp.h.A) opZeros(m, m)]]
+    x, stats_minres = minres_qlp(H, u, atol = eps(T)^0.5)
+    
+    if norm(x[1:m]) <= Δ && stats_minres.solved
+      # w = Q^{-1}A^T y = x[m+n+1:m+2*n]
+      set_solution!(stats, x[m+n+1:m+2*n]  - x1[1:n])
+      return
+    end
+  end
+  if !reg_nlp.h.full_row_rank
     αₖ = αmin
     H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
     x1, _ = minres_qlp(H, u1)
   end
   u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
-  x2, _ = minres_qlp(H, u2)
+  x2, stats_minres = minres_qlp(H, u2)
 
   α₊ =
     αₖ +
@@ -436,7 +467,7 @@ function SolverCore.solve!(
   αₖ = α₊ ≤ 0 ? θ*αₖ : α₊
   αₖ = αₖ ≤ αmin ? αmin : αₖ
 
-  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > eps(T)^(0.75) &&
+  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > eps(T)^0.3 &&
           stats.iter < max_iter &&
           stats.elapsed_time < max_time
     H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
@@ -455,5 +486,9 @@ function SolverCore.solve!(
     set_iter!(stats, stats.iter + 1)
     set_time!(stats, time()-start_time)
   end
-  set_solution!(stats, x1[1:n])
+  if stats_minres.solved == true 
+    set_solution!(stats, x1[1:n])
+  else
+    set_solution!(stats, x)
+  end
 end
