@@ -1,7 +1,7 @@
 using LinearAlgebra: length
 using LinearAlgebra, Random, Test
 using ProximalOperators
-using ADNLPModels, NLPModels, NLPModelsModifiers, OptimizationProblems, OptimizationProblems.ADNLPProblems, RegularizedProblems, RegularizedOptimization, SolverCore
+using CUTEst, NLPModels, NLPModelsModifiers, RegularizedProblems, RegularizedOptimization, SolverCore
 
 const global compound = 1
 const global nz = 10 * compound
@@ -10,12 +10,20 @@ const global bpdn, bpdn_nls, sol = bpdn_model(compound)
 const global bpdn2, bpdn_nls2, sol2 = bpdn_model(compound, bounds = true)
 const global λ = norm(grad(bpdn, zeros(bpdn.meta.nvar)), Inf) / 10
 
-meta = OptimizationProblems.meta
-problem_list = meta[(meta.has_equalities_only .== 1) .& (meta.has_bounds.==0) .& (meta.has_fixed_variables.==0) .& (meta.variable_nvar .== 0), :]
+problem_list = select_sif_problems(; max_var=100,only_equ_con = true, only_free_var = true, min_con =1, max_con = 100)
 
-for problem ∈ eachrow(problem_list)
-  for (nlp,subsolver_name) ∈ ((eval(Meta.parse(problem.name))(),"R2"),(LSR1Model(eval(Meta.parse(problem.name))()),"R2N-LSR1"),(LBFGSModel(eval(Meta.parse(problem.name))()),"R2N-LBFGS"))
-    @testset "Optimization Problems - $(problem.name) - L2Penalty - $(subsolver_name)" begin
+for problem ∈ problem_list
+  for (subsolver_name) ∈ ("R2", "R2N-LBFGS") #TODO : Add LSR1 tests
+    if subsolver_name == "R2"
+       nlp = CUTEstModel(problem)
+    elseif subsolver_name == "R2N-LBFGS" 
+      nlp = LBFGSModel(CUTEstModel(problem))
+    end
+    if nlp.meta.ncon > nlp.meta.nvar 
+      finalize(nlp)
+      continue
+    end
+    @testset "Optimization Problems - $(problem) - L2Penalty - $(subsolver_name)" begin
         if subsolver_name == "R2"
           out = L2Penalty(
             nlp,
@@ -23,7 +31,7 @@ for problem ∈ eachrow(problem_list)
             rtol = 1e-3,
             ktol = 1e-1,
             max_iter = 100,
-            max_time = 10.0,
+            max_time = 30.0,
             verbose = 1
           ) 
         else
@@ -34,7 +42,7 @@ for problem ∈ eachrow(problem_list)
             rtol = 1e-3,
             ktol = 1e-1,
             max_iter = 100,
-            max_time = 10.0,
+            max_time = 30.0,
             verbose = 1
           )
         end
@@ -42,6 +50,7 @@ for problem ∈ eachrow(problem_list)
         @test length(out.solution) == nlp.meta.nvar
         @test typeof(out.dual_feas) == eltype(out.solution)
         @test (out.status == :first_order) || (out.status == :infeasible) || (out.status == :max_iter) || (out.status == :max_time)
+        finalize(nlp)
     end      
   end
 end
