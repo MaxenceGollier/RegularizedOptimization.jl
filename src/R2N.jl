@@ -227,7 +227,7 @@ function SolverCore.solve!(
   γ::T = T(3),
   β::T = 1 / eps(T),
   θ::T = 1/(1 + eps(T)^(1 / 5)),
-  sub_kwargs::Dict{Symbol, T} = Dict{Symbol, T}(),
+  sub_kwargs::Dict{Symbol} = Dict(),
 ) where {T, V, G}
   reset!(stats)
 
