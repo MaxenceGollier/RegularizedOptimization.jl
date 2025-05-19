@@ -18,6 +18,7 @@ mutable struct R2NSolver{
   s::V
   s1::V
   has_bnds::Bool
+  store_h::Bool
   l_bound::V
   u_bound::V
   l_bound_m_x::V
@@ -32,6 +33,7 @@ function R2NSolver(
   reg_nlp::AbstractRegularizedNLPModel{T, V};
   subsolver = R2Solver,
   m_monotone::Int = 1,
+  store_h = false
 ) where {T, V}
   x0 = reg_nlp.model.meta.x0
   l_bound = reg_nlp.model.meta.lvar
@@ -60,7 +62,15 @@ function R2NSolver(
     has_bnds ? shifted(reg_nlp.h, xk, l_bound_m_x, u_bound_m_x, reg_nlp.selected) :
     shifted(reg_nlp.h, xk)
 
-  Bk = hess_op(reg_nlp.model, x0)
+  store_h = isa(reg_nlp.model, QuasiNewtonModel) ? false : store_h
+
+  if !store_h
+    Bk = hess_op(reg_nlp.model, x0) 
+  else
+    rows, cols = hess_structure(reg_nlp.model)
+    vals = hess_coord(reg_nlp.model, x0)
+    Bk = SparseMatrixCOO(reg_nlp.model.meta.nvar, reg_nlp.model.meta.nvar, rows, cols, vals)
+  end
   sub_nlp = R2NModel(Bk, ∇fk, T(1), x0)
   subpb = RegularizedNLPModel(sub_nlp, ψ)
   substats = RegularizedExecutionStats(subpb)
@@ -76,6 +86,7 @@ function R2NSolver(
     s,
     s1,
     has_bnds,
+    store_h,
     l_bound,
     u_bound,
     l_bound_m_x,
@@ -215,7 +226,7 @@ function SolverCore.solve!(
   γ::T = T(3),
   β::T = 1 / eps(T),
   θ::T = 1/(1 + eps(T)^(1 / 5)),
-  sub_kwargs::Dict{Symbol} = Dict(),
+  sub_kwargs::Dict{Symbol, T} = Dict{Symbol, T}(),
 ) where {T, V, G}
   reset!(stats)
 
@@ -287,7 +298,11 @@ function SolverCore.solve!(
 
   quasiNewtTest = isa(nlp, QuasiNewtonModel)
   λmax::T = T(1)
-  solver.subpb.model.B = hess_op(nlp, xk)
+  if !solver.store_h 
+    solver.subpb.model.B = hess_op(nlp, xk)
+  else
+    hess_coord!(nlp, xk, solver.subpb.model.B.vals)
+  end
 
   λmax, found_λ = opnorm(solver.subpb.model.B)
   found_λ || error("operator norm computation failed")
@@ -417,7 +432,11 @@ function SolverCore.solve!(
         @. ∇fk⁻ = ∇fk - ∇fk⁻
         push!(nlp, s, ∇fk⁻)
       end
-      solver.subpb.model.B = hess_op(nlp, xk)
+      if !solver.store_h 
+        solver.subpb.model.B = hess_op(nlp, xk)
+      else
+        hess_coord!(nlp, xk, solver.subpb.model.B.vals)
+      end
 
       λmax, found_λ = opnorm(solver.subpb.model.B)
       found_λ || error("operator norm computation failed")
