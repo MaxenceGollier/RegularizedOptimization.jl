@@ -117,7 +117,7 @@ where φ(s ; xₖ) = f(xₖ) + ∇f(xₖ)ᵀs + ½ sᵀBₖs is a quadratic appr
 
 For advanced usage, first define a solver "R2NSolver" to preallocate the memory used in the algorithm, and then call `solve!`:
 
-    solver = R2NSolver(reg_nlp; m_monotone = 1)
+    solver = R2NSolver(reg_nlp; m_monotone = 1, store_h = false)
     solve!(solver, reg_nlp)
 
     stats = RegularizedExecutionStats(reg_nlp)
@@ -142,6 +142,7 @@ For advanced usage, first define a solver "R2NSolver" to preallocate the memory 
 - `γ::T = T(3)`: regularization parameter multiplier, σ := σ/γ when the iteration is very successful and σ := σγ when the iteration is unsuccessful;
 - `θ::T = 1/(1 + eps(T)^(1 / 5))`: is the model decrease fraction with respect to the decrease of the Cauchy model;
 - `m_monotone::Int = 1`: monotonicity parameter. By default, R2N is monotone but the non-monotone variant will be used if `m_monotone > 1`;
+- `store_h::Bool = false`: whether the solver stores the Hessian or quasi-Newton approximation in sparse format or not. For quasi-Newton models, this should always be false. 
 - `sub_kwargs::Dict{Symbol}`: a dictionary containing the keyword arguments to be sent to the subsolver. The solver will fail if invalid keyword arguments are provided to the subsolver.
 
 The algorithm stops either when `√(ξₖ/νₖ) < atol + rtol*√(ξ₀/ν₀) ` or `ξₖ < 0` and `√(-ξₖ/νₖ) < neg_tol` where ξₖ := f(xₖ) + h(xₖ) - φ(sₖ; xₖ) - ψ(sₖ; xₖ), and √(ξₖ/νₖ) is a stationarity measure.
