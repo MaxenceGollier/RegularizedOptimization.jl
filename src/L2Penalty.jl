@@ -320,7 +320,7 @@ function SolverCore.solve!(
     #mul!(solver.dual_res, solver.subsolver.ψ.A', solver.y, -one(T), zero(T))
     #@. solver.dual_res += solver.subsolver.∇fk
     isa(solver.subsolver, R2Solver) && set_residuals!(stats, hx, norm(solver.subsolver.s)*solver.substats.solver_specific[:sigma])
-    isa(solver.subsolver, R2NSolver) && set_residuals!(stats, hx, norm(solver.subsolver.s1)*solver.substats.solver_specific[:sigma])
+    isa(solver.subsolver, R2NSolver) && set_residuals!(stats, hx, norm(solver.subsolver.s1)*solver.substats.solver_specific[:sigma_cauchy])
 
     set_status!(
       stats,
