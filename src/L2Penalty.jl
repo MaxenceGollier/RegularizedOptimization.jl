@@ -1,4 +1,3 @@
-using DelimitedFiles
 export L2Penalty, L2PenaltySolver, solve!, L2_R2N_subsolver
 
 import SolverCore.solve!
@@ -221,6 +220,7 @@ function SolverCore.solve!(
     error("L2Penalty: prox-gradient step should produce a decrease but θ = $(θ)")
 
   atol += rtol * sqrt_θ # make stopping test absolute and relative
+  println(atol)
   ktol = max(ktol, atol) # Keep ϵ₀ ≥ ϵ
   tol_init = ktol # store value of ϵ₀ 
 
@@ -415,108 +415,44 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
   @. u1[1:n] = reg_nlp.model.∇f/reg_nlp.model.σ # - mν∇fk
   @. u1[(n + 1):(n + m)] = -reg_nlp.h.b
 
-  full_row_rank = reg_nlp.h.full_row_rank
   αₖ = 0.0
-  αmin = eps(T)^(0.9)
+  αmin = eps(T)^(0.45)
   θ = 0.8
   Q = reg_nlp.model.B/reg_nlp.model.σ
-  writedlm("Q.txt", Matrix(Q))
   atol = eps(T)^0.3
 
   H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
-  x1, stats_minres = minres_qlp(H, u1)
-  
-  solved = stats_minres.solved
-  #println("-----------")
-  #println(norm(x1[(n + 1):end]) <= Δ && full_row_rank && solved)
-  #println(norm(x1[(n + 1):end]) <= Δ)
-  #println(full_row_rank)
-  #println(solved)
-  #println("-----------")
-  if norm(x1[(n + 1):end]) <= Δ && solved && !stats_minres.inconsistent
-    set_solution!(stats, x1[1:n])
-    return
-  end
-  """
-  if reg_nlp.h.h.lambda*norm(reg_nlp.h.b) - obj(reg_nlp, x1[1:n]) < 0 && norm(x1[(n + 1):(n + m)]) <= Δ # The problem is not convex, retreat to Cauchy point.
-    set_solution!(stats, x)
-    return
-  end
-  """
-  happened = false
-  res = norm(H*x1-u1)
-  #println(res)
+  x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
-  if !full_row_rank && norm(H*x1-u1) ≤ eps(T)^0.4
+  if norm(x1[n+1:n+m]) <= Δ && !stats_minres.inconsistent
+		set_solution!(stats, x1[1:n])
+		return
+	end
 
-    # First compute v = -(AQ^-1 d + b). USE GMRES because this matrix is not hermitian...
-    H = [[-Q-opEye(n,n) opZeros(n, m)];
-         [reg_nlp.h.A opEye(m, m)]]
-    x2, stats_gmres = gmres(H, u1)
-    u = zeros(T, 2*n + 2*m)
-    u[m+2*n+1:end] .= x2[n+1:end]
+	if stats_minres.inconsistent == true
+		αₖ = αmin
+		H = [[-Q reg_nlp.h.A'];[reg_nlp.h.A αₖ*opEye(m,m)]]
+		x1,_ = minres_qlp(H,u1)
+	end
 
-    H = [[opEye(m,m) LinearOperator(reg_nlp.h.A) opZeros(m, n) opZeros(m, m)]; 
-         [LinearOperator(reg_nlp.h.A') opZeros(n, n) Q+opEye(n,n) opZeros(n, m)];
-         [opZeros(n,m) Q+opEye(n,n) opZeros(n, n) -LinearOperator(reg_nlp.h.A')];
-         [opZeros(m, m) opZeros(m, n) -LinearOperator(reg_nlp.h.A) opZeros(m, m)]]
-    x, stats_minres = minres_qlp(H, u, atol = eps(T)^0.4)
-    #println(stats_minres)
-    #println(norm(H*x-u))
-    if norm(x[1:m]) <= Δ + atol && stats_minres.solved && !stats_minres.inconsistent
-      # w = Q^{-1}A^T y = x[m+n+1:m+2*n]
-      set_solution!(stats, -x[m+n+1:m+2*n]  + x2[1:n])
-      #println("YES STILL !!!")
-      println(stats_minres)
-      return
-    end
-  end
-
-  if !full_row_rank || !solved
-    αₖ = eps(T)^0.2
-    H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
-    x1, stats_minres = minres_qlp(H, u1)
-    #println(stats_minres)
-  end
   u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
-  x2, stats_minres = minres_qlp(H, u2)
-  #println(stats_minres)
-  #println(αₖ + norm(x1[(n + 1):(n + m)])^2/dot(x1[(n + 1):(n + m)], x2[(n + 1):(n + m)])*(norm(x1[(n + 1):(n + m)])/Δ - 1))
+  x2, stats_minres = minres_qlp(H, u2, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
-  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > atol && stats.iter < max_iter && stats.elapsed_time < max_time
+  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > eps(T)^(0.75) && stats.iter < max_iter && stats.elapsed_time < max_time
+    #println(αₖ)
     α₊ = αₖ + norm(x1[(n + 1):(n + m)])^2/dot(x1[(n + 1):(n + m)], x2[(n + 1):(n + m)])*(norm(x1[(n + 1):(n + m)])/Δ - 1)
 
     αₖ = α₊ ≤ 0 ? θ*αₖ : α₊
     αₖ = αₖ ≤ αmin ? αmin : αₖ
 
     H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
-    x1, stats_minres = minres_qlp(H, u1)
+    x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.7, rtol = eps(T)^0.7)
     u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
-    x2, _ = minres_qlp(H, u2)
+    x2, _ = minres_qlp(H, u2, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
     set_iter!(stats, stats.iter + 1)
     set_time!(stats, time()-start_time)
     αₖ == αmin && break
-  end
-  """
-  #println(x1[1:n])
-  println("---------")
-  println(stats.iter)
-  println(αₖ)
-  println(full_row_rank)
-  println("----------")
-  #println(norm(x1[(n + 1):(n + m)]))
-  #println(Δ)
-  #println(x1[1:n])
-  #x, _ = minres_qlp(Q+opEye(n,n), (-reg_nlp.model.∇f/reg_nlp.model.σ + reg_nlp.h.A'*x1[n+1:end]))
-  #println(x)
-  println("sol 1")
-  """
-  #println(typeof(Q))
-  #error("done")
-  if stats.iter > 10 
-    println(norm(H*x1-u1))
-    println(reg_nlp.h.full_row_rank)
   end
   set_solution!(stats, x1[1:n])
 end
