@@ -46,8 +46,9 @@ function L2PenaltySolver(nlp::AbstractNLPModel{T, V}; subsolver = R2Solver) wher
   )
 
   # Allocate sub_h = ||c(x)|| to solve min f(x) + τ||c(x)||
+  store_previous_jacobian = isa(nlp, QuasiNewtonModel) ? true : false
   sub_h =
-    CompositeNormL2(one(T), (c, x) -> cons!(nlp, x, c), (j, x) -> jac_coord!(nlp, x, j.vals), A, b)
+    CompositeNormL2(one(T), (c, x) -> cons!(nlp, x, c), (j, x) -> jac_coord!(nlp, x, j.vals), A, b, store_previous_jacobian = store_previous_jacobian)
   subnlp = RegularizedNLPModel(nlp, sub_h)
   if subsolver == R2NSolver
     solver = subsolver(subnlp, subsolver = L2_R2N_subsolver)
@@ -220,7 +221,6 @@ function SolverCore.solve!(
     error("L2Penalty: prox-gradient step should produce a decrease but θ = $(θ)")
 
   atol += rtol * sqrt_θ # make stopping test absolute and relative
-  println(atol)
   ktol = max(ktol, atol) # Keep ϵ₀ ≥ ϵ
   tol_init = ktol # store value of ϵ₀ 
 
@@ -253,6 +253,8 @@ function SolverCore.solve!(
         solver.subpb,
         solver.substats;
         callback = sub_callback,
+        qn_update_y! = _qn_lag_update_y!,
+        qn_copy! = _qn_lag_copy!,
         x = x,
         atol = ktol,
         rtol = T(0),
@@ -316,9 +318,6 @@ function SolverCore.solve!(
     set_time!(stats, time() - start_time)
     set_objective!(stats, fx)
 
-    #@. solver.y = solver.subsolver.ψ.q*solver.substats.solver_specific[:sigma]
-    #mul!(solver.dual_res, solver.subsolver.ψ.A', solver.y, -one(T), zero(T))
-    #@. solver.dual_res += solver.subsolver.∇fk
     isa(solver.subsolver, R2Solver) && set_residuals!(stats, hx, norm(solver.subsolver.s)*solver.substats.solver_specific[:sigma])
     isa(solver.subsolver, R2NSolver) && set_residuals!(stats, hx, norm(solver.subsolver.s1)*solver.substats.solver_specific[:sigma_cauchy])
 
@@ -343,8 +342,6 @@ function SolverCore.solve!(
   end
 
   set_solution!(stats, x)
-  #isa(solver.subsolver, R2Solver) && set_constraint_multipliers!(stats, solver.subsolver.s)
-  #isa(solver.subsolver, R2NSolver) && set_constraint_multipliers!(stats, solver.subsolver.s1)
   return stats
 end
 
@@ -383,7 +380,6 @@ function L2_R2N_subsolver(reg_nlp::AbstractRegularizedNLPModel{T, V};) where {T,
   x0 = reg_nlp.model.meta.x0
   n = reg_nlp.model.meta.nvar
   m = length(reg_nlp.h.b)
-  #x = zero(x0)
   u1 = similar(x0, n+m)
   u2 = zeros(eltype(x0), n+m)
 
@@ -416,20 +412,23 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
   @. u1[(n + 1):(n + m)] = -reg_nlp.h.b
 
   αₖ = 0.0
-  αmin = eps(T)^(0.45)
+  αmin = eps(T)^(0.5)
   θ = 0.8
   Q = reg_nlp.model.B/reg_nlp.model.σ
   atol = eps(T)^0.3
 
   H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
-  x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.7, rtol = eps(T)^0.7)
-
-  if norm(x1[n+1:n+m]) <= Δ && !stats_minres.inconsistent
+  x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.8, rtol = eps(T)^0.8, Artol  = eps(T)^0.7)
+  if norm(x1[n+1:n+m]) <= Δ && !stats_minres.inconsistent && !(stats_minres.status =="condition number seems too large for this machine")
 		set_solution!(stats, x1[1:n])
+    if obj(reg_nlp, zeros(T, n)) - obj(reg_nlp, x1[1:n]) < 0
+      set_solution!(stats, x)
+      reset!(reg_nlp.model.B)
+    end
 		return
 	end
 
-	if stats_minres.inconsistent == true
+	if stats_minres.inconsistent == true || stats_minres.status =="condition number seems too large for this machine"
 		αₖ = αmin
 		H = [[-Q reg_nlp.h.A'];[reg_nlp.h.A αₖ*opEye(m,m)]]
 		x1,_ = minres_qlp(H,u1)
@@ -438,8 +437,7 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
   u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
   x2, stats_minres = minres_qlp(H, u2, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
-  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > eps(T)^(0.75) && stats.iter < max_iter && stats.elapsed_time < max_time
-    #println(αₖ)
+  while abs(norm(x1[(n + 1):(n + m)]) - Δ) > atol && stats.iter < max_iter && stats.elapsed_time < max_time
     α₊ = αₖ + norm(x1[(n + 1):(n + m)])^2/dot(x1[(n + 1):(n + m)], x2[(n + 1):(n + m)])*(norm(x1[(n + 1):(n + m)])/Δ - 1)
 
     αₖ = α₊ ≤ 0 ? θ*αₖ : α₊
@@ -454,5 +452,22 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
     set_time!(stats, time()-start_time)
     αₖ == αmin && break
   end
+  stats.iter >= max_iter && reset!(reg_nlp.model.B)
   set_solution!(stats, x1[1:n])
 end
+
+function _qn_lag_update_y!(nlp::AbstractNLPModel{T, V}, solver::R2NSolver{T, G, V}, stats::GenericExecutionStats) where{T, V, G}
+  @. solver.y = solver.∇fk - solver.∇fk⁻
+  if solver.ψ.full_row_rank
+    m, n = size(solver.ψ.A)
+    λ = solver.ψ.A'\solver.∇fk
+    mul!(solver.y, solver.ψ.A', λ, -one(T), one(T)) # y = y + J(x)^T λ 
+    mul!(solver.y, solver.ψ.A_prev', λ, one(T), one(T)) # y = y - J(x)_prev^T λ
+  end
+end
+
+function _qn_lag_copy!(nlp::AbstractNLPModel{T, V}, solver::R2NSolver{T, G, V}, stats::GenericExecutionStats) where{T, V,  G}
+  solver.∇fk⁻ .= solver.∇fk
+  solver.ψ.A_prev.vals .= solver.ψ.A.vals
+end
+

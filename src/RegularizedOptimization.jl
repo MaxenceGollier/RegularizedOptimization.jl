@@ -19,12 +19,12 @@ include("splitting.jl")
 include("TR_alg.jl")
 include("TRDH_alg.jl")
 include("R2_alg.jl")
-include("L2Penalty.jl")
 include("LM_alg.jl")
 include("LMTR_alg.jl")
 include("R2DH.jl")
 include("R2NModel.jl")
 include("R2N.jl")
 include("AL_alg.jl")
+include("L2Penalty.jl")
 
 end  # module RegularizedOptimization
