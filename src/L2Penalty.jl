@@ -305,6 +305,9 @@ function SolverCore.solve!(
       (θ < 0 && sqrt_θ ≤ neg_tol && solver.substats.status == :first_order)
     (θ < 0 && sqrt_θ > neg_tol) &&
       error("L2Penalty: prox-gradient step should produce a decrease but θ = $(θ)")
+    
+    infeasible = (hx/sqrt_θ > T(100) && solved)
+    infeasible == true && (solved = false)
 
     verbose > 0 &&
       stats.iter % verbose == 0 &&
@@ -329,6 +332,7 @@ function SolverCore.solve!(
         n_iter_since_decrease = n_iter_since_decrease,
         iter = stats.iter,
         optimal = solved,
+        infeasible = infeasible,
         max_eval = max_eval,
         max_time = max_time,
         max_iter = max_iter,
@@ -351,6 +355,7 @@ function get_status(
   iter = 0,
   optimal = false,
   n_iter_since_decrease = 0,
+  infeasible = true,
   max_eval = Inf,
   max_time = Inf,
   max_iter = Inf,
@@ -364,7 +369,7 @@ function get_status(
     :max_time
   elseif neval_obj(nlp) > max_eval && max_eval > -1
     :max_eval
-  elseif n_iter_since_decrease ≥ max_decreas_iter
+  elseif n_iter_since_decrease ≥ max_decreas_iter || infeasible
     :infeasible
   else
     :unknown
