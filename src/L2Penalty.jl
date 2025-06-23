@@ -291,11 +291,12 @@ function SolverCore.solve!(
       νsub = 1/max(β4, β3*τ)
     else
       n_iter_since_decrease = 0
-      ktol = max(β2^(ceil(log(β2, sqrt_ξ_νInv/tol_init)))*ktol, atol) #the β^... allows to directly jump to a sufficiently small ϵₖ
+      ktol = max(β2*ktol, atol)
       νsub = 1/solver.substats.solver_specific[:sigma]
     end
     if sqrt_θ > ktol && hx_prev ≥ hx
       n_iter_since_decrease += 1
+      β1 *= 10
     else
       n_iter_since_decrease = 0
     end
@@ -317,6 +318,7 @@ function SolverCore.solve!(
     rem_eval = max_eval - neval_obj(nlp)
     set_time!(stats, time() - start_time)
     set_objective!(stats, fx)
+    set_solver_specific!(stats,  :theta, sqrt_θ)
 
     isa(solver.subsolver, R2Solver) && set_residuals!(stats, hx, norm(solver.subsolver.s)*solver.substats.solver_specific[:sigma])
     isa(solver.subsolver, R2NSolver) && set_residuals!(stats, hx, norm(solver.subsolver.s1)*solver.substats.solver_specific[:sigma_cauchy])
@@ -402,22 +404,22 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
 
   n = reg_nlp.model.meta.nvar
   m = length(reg_nlp.h.b)
-  Δ = reg_nlp.h.h.lambda/reg_nlp.model.σ
+  Δ = reg_nlp.h.h.lambda
 
   u1 = solver.u1
   u2 = solver.u2
 
   # Create problem
-  @. u1[1:n] = reg_nlp.model.∇f/reg_nlp.model.σ # - mν∇fk
+  @. u1[1:n] = -reg_nlp.model.∇f
   @. u1[(n + 1):(n + m)] = -reg_nlp.h.b
 
   αₖ = 0.0
   αmin = eps(T)^(0.5)
   θ = 0.8
-  Q = reg_nlp.model.B/reg_nlp.model.σ
+  Q = reg_nlp.model.B
   atol = eps(T)^0.3
 
-  H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
+  H = [[Q+reg_nlp.model.σ*opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A -αₖ*opEye(m, m)]]
   x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.8, rtol = eps(T)^0.8, Artol  = eps(T)^0.7)
   if norm(x1[n+1:n+m]) <= Δ && !stats_minres.inconsistent && !(stats_minres.status =="condition number seems too large for this machine")
 		set_solution!(stats, x1[1:n])
@@ -434,7 +436,7 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
 		x1,_ = minres_qlp(H,u1)
 	end
 
-  u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
+  @. u2[(n + 1):(n + m)] = -x1[(n + 1):(n + m)]
   x2, stats_minres = minres_qlp(H, u2, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
   while abs(norm(x1[(n + 1):(n + m)]) - Δ) > atol && stats.iter < max_iter && stats.elapsed_time < max_time
@@ -443,9 +445,9 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
     αₖ = α₊ ≤ 0 ? θ*αₖ : α₊
     αₖ = αₖ ≤ αmin ? αmin : αₖ
 
-    H = [[-Q-opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A αₖ*opEye(m, m)]]
+    H = [[Q+reg_nlp.model.σ*opEye(n, n) reg_nlp.h.A']; [reg_nlp.h.A -αₖ*opEye(m, m)]]
     x1, stats_minres = minres_qlp(H, u1, atol = eps(T)^0.7, rtol = eps(T)^0.7)
-    u2[(n + 1):(n + m)] .= x1[(n + 1):(n + m)]
+    @. u2[(n + 1):(n + m)] = -x1[(n + 1):(n + m)]
     x2, _ = minres_qlp(H, u2, atol = eps(T)^0.7, rtol = eps(T)^0.7)
 
     set_iter!(stats, stats.iter + 1)
@@ -454,16 +456,53 @@ function SolverCore.solve!( # TODO: optimize this code, make it allocation-free 
   end
   stats.iter >= max_iter && reset!(reg_nlp.model.B)
   set_solution!(stats, x1[1:n])
+  if obj(reg_nlp, zeros(T, n)) - obj(reg_nlp, x1[1:n]) < 0 || any(isnan, x1)
+    set_solution!(stats, x)
+    reset!(reg_nlp.model.B)
+  end
 end
 
 function _qn_lag_update_y!(nlp::AbstractNLPModel{T, V}, solver::R2NSolver{T, G, V}, stats::GenericExecutionStats) where{T, V, G}
   @. solver.y = solver.∇fk - solver.∇fk⁻
-  if solver.ψ.full_row_rank
-    m, n = size(solver.ψ.A)
-    λ = solver.ψ.A'\solver.∇fk
-    mul!(solver.y, solver.ψ.A', λ, -one(T), one(T)) # y = y + J(x)^T λ 
-    mul!(solver.y, solver.ψ.A_prev', λ, one(T), one(T)) # y = y - J(x)_prev^T λ
+
+  ψ = solver.ψ
+  shifted_spmat = ψ.shifted_spmat
+  spmat = shifted_spmat.spmat
+  spfct = ψ.spfct
+  qrm_update_shift_spmat!(shifted_spmat, zero(T))
+  spmat.val[1:(spmat.mat.nz - spmat.mat.m)] .= ψ.A.vals
+  qrm_spfct_init!(spfct, spmat)
+  qrm_set(spfct, "qrm_keeph", 0) # Discard de Q matrix in all subsequent QR factorizations
+  qrm_set(spfct, "qrm_rd_eps", eps(T)^(0.4)) # If a diagonal element of the R-factor is less than eps(R)^(0.4), we consider that A is rank defficient.
+
+  mul!(ψ.g, ψ.A, solver.∇fk, one(T), zero(T))
+  qrm_analyse!(spmat, spfct; transp = 't')
+  qrm_factorize!(spmat, spfct, transp = 't')
+
+  # Check full-rankness
+  full_row_rank = (qrm_get(spfct, "qrm_rd_num") == 0)
+
+  if full_row_rank
+    qrm_solve!(spfct, ψ.g, ψ.p, transp = 't')
+    qrm_solve!(spfct, ψ.p, ψ.q, transp = 'n')
+    qrm_refine!(spmat, spfct, ψ.q, ψ.g, ψ.dq, ψ.p)
+  else
+    α = eps(T)^(0.9)
+    qrm_golub_riley!(
+      ψ.shifted_spmat,
+      spfct,
+      ψ.p,
+      ψ.g,
+      ψ.dp,
+      ψ.q,
+      ψ.dq,
+      transp = 't',
+      α = α,
+      tol = eps(T)^(0.75),
+    )
   end
+  mul!(solver.y, solver.ψ.A', ψ.q, -one(T), one(T)) # y = y + J(x)^T λ 
+  mul!(solver.y, solver.ψ.A_prev', ψ.q, one(T), one(T)) # y = y - J(x)_prev^T λ
 end
 
 function _qn_lag_copy!(nlp::AbstractNLPModel{T, V}, solver::R2NSolver{T, G, V}, stats::GenericExecutionStats) where{T, V,  G}

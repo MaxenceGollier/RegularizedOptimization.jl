@@ -8,7 +8,7 @@ using Arpack, ProximalOperators
 
 # dependencies from us
 using Krylov, LinearOperators,
-  NLPModels, NLPModelsModifiers, RegularizedProblems, ShiftedProximalOperators, SolverCore, SparseMatricesCOO
+  NLPModels, NLPModelsModifiers, QRMumps, RegularizedProblems, ShiftedProximalOperators, SolverCore, SparseMatricesCOO
 using Percival: AugLagModel, update_y!, update_μ!
 
 include("utils.jl")
