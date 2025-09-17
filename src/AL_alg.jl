@@ -299,6 +299,7 @@ function SolverCore.solve!(
     )
     solver.x .= subout.solution
     solver.cx .= solver.sub_problem.model.cx
+    println(solver.sub_problem.model.cx)
     subiters = subout.iter
 
     # objective
