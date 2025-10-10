@@ -13,7 +13,8 @@ using LinearOperators,
   NLPModelsModifiers,
   RegularizedProblems,
   ShiftedProximalOperators,
-  SolverCore
+  SolverCore,
+  SparseMatricesCOO
 using Percival: AugLagModel, update_y!, update_μ!
 
 const callback_docstring = "

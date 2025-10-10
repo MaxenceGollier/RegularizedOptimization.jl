@@ -17,6 +17,7 @@ ProximalOperators = "a725b495-10eb-56fe-b38b-717eba820537"
 RegularizedProblems = "ea076b23-609f-44d2-bb12-a4ae45328278"
 ShiftedProximalOperators = "d4fd37fa-580c-4e43-9b30-361c21aae263"
 SolverCore = "ff4d7338-4cf1-434d-91df-b86cb86fb843"
+SparseMatricesCOO = "fa32481b-f100-4b48-8dc8-c62f61b13870"
 
 [compat]
 ADNLPModels = "0.8.13"
@@ -31,6 +32,7 @@ ProximalOperators = "0.15"
 RegularizedProblems = "0.1.1"
 ShiftedProximalOperators = "0.2"
 SolverCore = "0.3.0"
+SparseMatricesCOO = "0.2.4"
 julia = "^1.6.0"
 
 [extras]

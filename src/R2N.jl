@@ -20,6 +20,7 @@ mutable struct R2NSolver{
   s1::V
   v0::V
   has_bnds::Bool
+  store_h::Bool
   l_bound::V
   u_bound::V
   l_bound_m_x::V
@@ -34,6 +35,7 @@ function R2NSolver(
   reg_nlp::AbstractRegularizedNLPModel{T, V};
   subsolver = R2Solver,
   m_monotone::Int = 1,
+  store_h = false
 ) where {T, V}
   x0 = reg_nlp.model.meta.x0
   l_bound = reg_nlp.model.meta.lvar
@@ -67,7 +69,16 @@ function R2NSolver(
     has_bnds ? shifted(reg_nlp.h, xk, l_bound_m_x, u_bound_m_x, reg_nlp.selected) :
     shifted(reg_nlp.h, xk)
 
-  Bk = hess_op(reg_nlp.model, x0)
+  store_h = isa(reg_nlp.model, QuasiNewtonModel) ? false : store_h
+
+  if !store_h
+    Bk = hess_op(reg_nlp.model, x0) 
+  else
+    rows, cols = hess_structure(reg_nlp.model)
+    vals = hess_coord(reg_nlp.model, x0)
+    Bk = SparseMatrixCOO(reg_nlp.model.meta.nvar, reg_nlp.model.meta.nvar, rows, cols, vals)
+  end
+
   sub_nlp = R2NModel(Bk, ∇fk, T(1), x0)
   subpb = RegularizedNLPModel(sub_nlp, ψ)
   substats = RegularizedExecutionStats(subpb)
@@ -85,6 +96,7 @@ function R2NSolver(
     s1,
     v0,
     has_bnds,
+    store_h,
     l_bound,
     u_bound,
     l_bound_m_x,
@@ -115,7 +127,7 @@ where φ(s ; xₖ) = f(xₖ) + ∇f(xₖ)ᵀs + ½ sᵀBₖs is a quadratic appr
 
 For advanced usage, first define a solver "R2NSolver" to preallocate the memory used in the algorithm, and then call `solve!`:
 
-    solver = R2NSolver(reg_nlp; m_monotone = 1)
+    solver = R2NSolver(reg_nlp; m_monotone = 1, store_h = false)
     solve!(solver, reg_nlp)
 
     stats = RegularizedExecutionStats(reg_nlp)
@@ -142,6 +154,7 @@ For advanced usage, first define a solver "R2NSolver" to preallocate the memory 
 - `opnorm_maxiter::Int = 5`: how many iterations of the power method to use to compute the operator norm of Bₖ. If a negative number is provided, then Arpack is used instead;
 - `m_monotone::Int = 1`: monotonicity parameter. By default, R2N is monotone but the non-monotone variant will be used if `m_monotone > 1`;
 - `sub_kwargs::NamedTuple = NamedTuple()`: a named tuple containing the keyword arguments to be sent to the subsolver. The solver will fail if invalid keyword arguments are provided to the subsolver. For example, if the subsolver is `R2Solver`, you can pass `sub_kwargs = (max_iter = 100, σmin = 1e-6,)`.
+- `store_h::Bool = false`: whether the solver stores the Hessian or quasi-Newton approximation in sparse format or not. For quasi-Newton models, this should always be false. 
 
 The algorithm stops either when `√(ξₖ/νₖ) < atol + rtol*√(ξ₀/ν₀) ` or `ξₖ < 0` and `√(-ξₖ/νₖ) < neg_tol` where ξₖ := f(xₖ) + h(xₖ) - φ(sₖ; xₖ) - ψ(sₖ; xₖ), and √(ξₖ/νₖ) is a stationarity measure.
 
@@ -292,12 +305,17 @@ function SolverCore.solve!(
   quasiNewtTest = isa(nlp, QuasiNewtonModel)
   λmax::T = T(1)
   found_λ = true
-  solver.subpb.model.B = hess_op(nlp, xk)
+
+  if !solver.store_h
+    solver.subpb.model.B = hess_op(nlp, xk)
+  else
+    hess_coord!(nlp, xk, solver.subpb.model.B.vals)
+  end
 
   if opnorm_maxiter ≤ 0
-    λmax, found_λ = opnorm(solver.subpb.model.B)
+    λmax, found_λ = opnorm(solver.subpb.model.apply_sym(solver.subpb.model.B))
   else
-    λmax = power_method!(solver.subpb.model.B, solver.v0, solver.subpb.model.v, opnorm_maxiter)
+    λmax = power_method!(solver.subpb.model.apply_sym(solver.subpb.model.B), solver.v0, solver.subpb.model.v, opnorm_maxiter)
   end
   found_λ || error("operator norm computation failed")
 
@@ -384,6 +402,11 @@ function SolverCore.solve!(
         sub_kwargs...,
       )
     end
+    if solver.substats.status == :unbounded 
+      println("ok ?")
+      σk = σk * γ
+      continue
+    end
 
     prox_evals += solver.substats.iter
     s .= solver.substats.solution
@@ -445,12 +468,17 @@ function SolverCore.solve!(
         push!(nlp, s, solver.y)
         qn_copy!(nlp, solver, stats)
       end
-      solver.subpb.model.B = hess_op(nlp, xk)
+
+      if !solver.store_h
+        solver.subpb.model.B = hess_op(nlp, xk)
+      else
+        hess_coord!(nlp, xk, solver.subpb.model.B.vals)
+      end
 
       if opnorm_maxiter ≤ 0
-        λmax, found_λ = opnorm(solver.subpb.model.B)
+        λmax, found_λ = opnorm(solver.subpb.model.apply_sym(solver.subpb.model.B))
       else
-        λmax = power_method!(solver.subpb.model.B, solver.v0, solver.subpb.model.v, opnorm_maxiter)
+        λmax = power_method!(solver.subpb.model.apply_sym(solver.subpb.model.B), solver.v0, solver.subpb.model.v, opnorm_maxiter)
       end
       found_λ || error("operator norm computation failed")
     end
