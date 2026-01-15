@@ -6,11 +6,33 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 jobs:
-  placeholder:
-    runs-on: ubuntu-latest
+  example:
+    name: Run example.jl (${{ matrix.version }} - ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['lts', '1']
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+
     steps:
-      - name: Placeholder
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-examples-${{ hashFiles('paper/examples/Project.toml') }}
+
+      - name: Instantiate example environment
         run: |
-          echo "CompareBenchmarks workflow placeholder"
-          echo "This workflow will be implemented in a future update.":
+          julia --project=paper/examples -e "using Pkg; Pkg.instantiate()"
+
+      - name: Run example.jl
+        run: |
+          julia --project=paper/examples paper/examples/example.jl
   
