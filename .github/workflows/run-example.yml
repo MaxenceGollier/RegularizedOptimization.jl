@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['lts', '1']
+        version: ['lts', '1', 'pre']
         os: [ubuntu-latest, macOS-latest, windows-latest]
 
     steps:
@@ -24,9 +24,16 @@ jobs:
           version: ${{ matrix.version }}
 
       - uses: actions/cache@v4
+        env:
+          cache-name: cache-artifacts
         with:
           path: ~/.julia/artifacts
-          key: ${{ runner.os }}-examples-${{ hashFiles('paper/examples/Project.toml') }}
+          key: ${{ runner.os }}-example-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-example-${{ env.cache-name }}-
+            ${{ runner.os }}-example-
+            ${{ runner.os }}-
+
 
       - name: Instantiate example environment
         run: |
