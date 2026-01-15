@@ -1,0 +1,16 @@
+name: run-example
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: |
+          echo "CompareBenchmarks workflow placeholder"
+          echo "This workflow will be implemented in a future update.":
+  
