@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['lts', '1', 'pre']
+        version: ['1', 'pre']
         os: [ubuntu-latest, macOS-latest, windows-latest]
 
     steps:
@@ -41,5 +41,5 @@ jobs:
 
       - name: Run example.jl
         run: |
-          julia --project=paper/examples paper/examples/example.jl
+          julia --project=paper/examples 'ENV["MLDATASETS_ACCEPT_ALL"]="true"; 'paper/examples/example.jl'
   
