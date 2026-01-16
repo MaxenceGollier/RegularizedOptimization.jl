@@ -3,8 +3,6 @@ using NLPModels, NLPModelsModifiers, RegularizedProblems, RegularizedOptimizatio
 using MLDatasets
 
 Random.seed!(1234)
-
-BLAS.set_num_threads(1)
 model, nls_model, _ = RegularizedProblems.svm_train_model()  # Build SVM model
 f = LSR1Model(model)                                         # L-SR1 Hessian approximation
 λ = 1.0                                                      # Regularization parameter
