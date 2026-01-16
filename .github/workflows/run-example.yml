@@ -41,5 +41,5 @@ jobs:
 
       - name: Run example.jl
         run: |
-          julia --project=paper/examples 'ENV["MLDATASETS_ACCEPT_ALL"]="true"; include("paper/examples/example.jl")'
+          julia --project=paper/examples -e 'ENV["MLDATASETS_ACCEPT_ALL"]="true"; include("paper/examples/example.jl")'
   
