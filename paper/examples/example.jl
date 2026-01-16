@@ -1,6 +1,7 @@
 using LinearAlgebra, Random, ShiftedProximalOperators
 using NLPModels, NLPModelsModifiers, RegularizedProblems, RegularizedOptimization
 using MLDatasets
+using MKL
 
 Random.seed!(1234)
 
