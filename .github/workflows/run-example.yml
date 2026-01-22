@@ -52,6 +52,7 @@ jobs:
           julia --project=paper/examples -e '
           ENV["MLDATASETS_ACCEPT_ALL"]="true";
           ENV["DATADEPS_ALWAYS_ACCEPT"]="true";
-          include("paper/examples/Benchmark.jl")
+          include("paper/examples/Benchmark.jl");
+          main()
           '
   
