@@ -6,11 +6,53 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 jobs:
-  placeholder:
-    runs-on: ubuntu-latest
+  example:
+    name: Run example.jl (${{ matrix.version }} - ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['1', '1.11.7']
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+
     steps:
-      - name: Placeholder
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+
+      - uses: actions/cache@v4
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-example-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-example-${{ env.cache-name }}-
+            ${{ runner.os }}-example-
+            ${{ runner.os }}-
+
+
+      - name: Instantiate example environment
         run: |
-          echo "CompareBenchmarks workflow placeholder"
-          echo "This workflow will be implemented in a future update.":
+          julia --project=paper/examples -e "using Pkg; Pkg.instantiate()"
+
+      - name: Run example.jl
+        run: |
+          julia --project=paper/examples -e '
+          ENV["MLDATASETS_ACCEPT_ALL"]="true";
+          ENV["DATADEPS_ALWAYS_ACCEPT"]="true";
+          include("paper/examples/example.jl")
+          '
+
+      - name: Run benchmark.jl
+        run: |
+          julia --project=paper/examples -e '
+          ENV["MLDATASETS_ACCEPT_ALL"]="true";
+          ENV["DATADEPS_ALWAYS_ACCEPT"]="true";
+          include("paper/examples/Benchmark.jl");
+          main()
+          '
   
