@@ -285,7 +285,6 @@ function SolverCore.solve!(
     )
   end
 
-  local ξ1::T
   local ρk::T = zero(T)
   local prox_evals::Int = 0
 
@@ -305,8 +304,6 @@ function SolverCore.solve!(
   found_λ || error("operator norm computation failed")
 
   ν₁ = θ / (λmax + σk)
-
-  sqrt_ξ1_νInv = one(T)
 
   @. mν∇fk = -ν₁ * ∇fk
 
