@@ -419,7 +419,7 @@ function SolverCore.solve!(
 
     fhmax = m_monotone > 1 ? maximum(m_fh_hist) : fk + hk
     Δobj = fhmax - (fkn + hkn) + max(1, abs(fk + hk)) * 10 * eps()
-    Δmod = fhmax - (fk + mks) + max(1, abs(fhmax)) * 10 * eps()
+    Δmod = fhmax - (fk + mk1(s)) + max(1, abs(fhmax)) * 10 * eps()
     ξ = hk - mks + max(1, abs(hk)) * 10 * eps()
 
     if (ξ < 0 || isnan(ξ))
