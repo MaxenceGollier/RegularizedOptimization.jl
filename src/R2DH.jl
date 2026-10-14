@@ -55,7 +55,7 @@ function R2DHSolver(
 
   ψ =
     has_bnds ? shifted(reg_nlp.h, xk, l_bound_m_x, u_bound_m_x, reg_nlp.selected) :
-    shifted_unbounded(reg_nlp, xk)
+    shifted(reg_nlp.h, xk, selected)
   isnothing(D) && (
     D =
       isa(reg_nlp.model, AbstractDiagonalQNModel) ? hess_op(reg_nlp.model, x0) :

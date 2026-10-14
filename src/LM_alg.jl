@@ -63,7 +63,7 @@ function LMSolver(
 
   ψ =
     has_bnds ? shifted(reg_nls.h, xk, l_bound_m_x, u_bound_m_x, reg_nls.selected) :
-    shifted_unbounded(reg_nls, xk)
+    shifted(reg_nls.h, xk, selected)
 
   Jk = jac_op_residual(reg_nls.model, xk)
   sub_nlp = LMModel(Jk, Fk, T(1), xk)
