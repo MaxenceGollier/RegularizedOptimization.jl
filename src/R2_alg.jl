@@ -83,7 +83,7 @@ function R2Solver(reg_nlp::AbstractRegularizedNLPModel{T, V}; m_monotone::Int = 
 
   ψ =
     has_bnds ? shifted(reg_nlp.h, xk, l_bound_m_x, u_bound_m_x, reg_nlp.selected) :
-    shifted(reg_nlp.h, xk)
+    shifted_unbounded(reg_nlp, xk)
   return R2Solver(
     xk,
     ∇fk,

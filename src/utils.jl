@@ -2,6 +2,19 @@ export RegularizedExecutionStats
 
 import SolverCore.GenericExecutionStats
 
+# Whether the regularizer only applies to some of the variables, i.e., reg_nlp.selected ≠ 1:nvar.
+partially_regularized(reg_nlp::AbstractRegularizedNLPModel) =
+  reg_nlp.selected != 1:get_nvar(reg_nlp.model)
+
+# Shift the regularizer of a problem without bounds at xk, restricted to reg_nlp.selected.
+# For trust-region methods, args... = (Δ, χ) define the trust region.
+# shifted(h, xk, selected) supports any h, but shifted(h, xk, Δ, χ, selected) is only defined
+# for the regularizers with a box variant in ShiftedProximalOperators.jl and χ = NormLinf(1).
+function shifted_unbounded(reg_nlp::AbstractRegularizedNLPModel, xk::AbstractVector, args...)
+  partially_regularized(reg_nlp) || return shifted(reg_nlp.h, xk, args...)
+  return shifted(reg_nlp.h, xk, args..., reg_nlp.selected)
+end
+
 # Reset the initial vector for the power method to [1/sqrt(n), -1/sqrt(n), 1/sqrt(n), ...].
 function _reset_power_method!(v0::AbstractVector)
   v0 .= (isodd.(eachindex(v0)) .* 2 .- 1) ./ sqrt(length(v0))
